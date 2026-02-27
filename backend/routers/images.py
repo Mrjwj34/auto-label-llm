@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import mimetypes
 from datetime import datetime
+import time
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, File, UploadFile
@@ -14,10 +15,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.api import AppError, ok
+from backend.database import get_session_factory
 from backend.deps import get_db
 from backend.models.annotation import Annotation
 from backend.models.image import Image
 from backend.models.project import Project
+from backend.tasks.task_manager import TaskContext, get_task_manager
 from backend.utils.storage import resolve_path, save_project_image_bytes
 
 
@@ -50,6 +53,10 @@ class AnnotationCreateIn(BaseModel):
         if xmin == xmax or ymin == ymax:
             raise ValueError("bbox must have non-zero area")
         return [xmin, ymin, xmax, ymax]
+
+
+class AnnotateIn(BaseModel):
+    prompt: str | None = None
 
 
 def _image_to_dict(img: Image) -> dict[str, Any]:
@@ -216,3 +223,41 @@ def create_annotation(image_id: int, payload: AnnotationCreateIn, db: Session = 
     db.commit()
     db.refresh(ann)
     return ok({"id": ann.id})
+
+
+@router.post("/images/{image_id}/annotate")
+def annotate_image(image_id: int, _payload: AnnotateIn, db: Session = Depends(get_db)):
+    image = db.get(Image, image_id)
+    if image is None:
+        raise AppError(404, "image not found")
+
+    manager = get_task_manager()
+    session_factory = get_session_factory()
+
+    def _job(ctx: TaskContext) -> None:
+        ctx.set_progress(5, "queued")
+        with session_factory() as task_db:
+            img = task_db.get(Image, image_id)
+            if img is None:
+                raise RuntimeError("image not found")
+            img.status = "annotating"
+            task_db.add(img)
+            task_db.commit()
+
+        # MVP: just simulate a long-running pipeline (LLM/SAM will be added in M4/M5)
+        ctx.set_progress(25, "running")
+        time.sleep(0.2)
+        ctx.set_progress(60, "running")
+        time.sleep(0.2)
+        ctx.set_progress(90, "finalizing")
+        time.sleep(0.1)
+
+        with session_factory() as task_db:
+            img = task_db.get(Image, image_id)
+            if img is not None:
+                img.status = "done"
+                task_db.add(img)
+                task_db.commit()
+
+    task_id = manager.create(_job)
+    return ok({"task_id": task_id})

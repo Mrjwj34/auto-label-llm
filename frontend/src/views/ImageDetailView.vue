@@ -39,6 +39,15 @@ const annotations = ref<AnnotationRow[]>([])
 
 const labelInput = ref('object')
 
+const taskState = reactive({
+  taskId: '' as string,
+  status: '' as string,
+  progress: 0 as number,
+  message: '' as string,
+})
+
+let pollTimer: ReturnType<typeof setInterval> | null = null
+
 type DrawMode = 'idle' | 'dragging' | 'armed'
 
 const drawing = reactive({
@@ -154,6 +163,52 @@ async function fetchImageAndAnnotations() {
     error.value = err?.message ? String(err.message) : String(err)
   } finally {
     loading.value = false
+  }
+}
+
+async function fetchTaskStatus(taskId: string) {
+  const resp = await api.get(`/api/tasks/${taskId}/status`)
+  const data = resp.data?.data
+  taskState.status = String(data?.status ?? '')
+  taskState.progress = Number(data?.progress ?? 0)
+  taskState.message = String(data?.message ?? '')
+
+  if (taskState.status === 'SUCCESS' || taskState.status === 'FAILURE') {
+    stopTaskPolling()
+    await fetchImageAndAnnotations()
+  }
+}
+
+function stopTaskPolling() {
+  if (pollTimer) clearInterval(pollTimer)
+  pollTimer = null
+}
+
+async function startAnnotateTask() {
+  if (!image.value) return
+  error.value = ''
+  try {
+    stopTaskPolling()
+    taskState.taskId = ''
+    taskState.status = ''
+    taskState.progress = 0
+    taskState.message = ''
+
+    const resp = await api.post(`/api/images/${imageId.value}/annotate`, { prompt: '' })
+    taskState.taskId = String(resp.data?.data?.task_id ?? '')
+    if (!taskState.taskId) throw new Error('no task_id returned')
+
+    await fetchTaskStatus(taskState.taskId)
+    pollTimer = setInterval(() => {
+      if (!taskState.taskId) return
+      void fetchTaskStatus(taskState.taskId)
+    }, 600)
+  } catch (err: any) {
+    error.value = err?.response?.data?.message
+      ? String(err.response.data.message)
+      : err?.message
+        ? String(err.message)
+        : String(err)
   }
 }
 
@@ -328,6 +383,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  stopTaskPolling()
   resizeObserver?.disconnect()
   resizeObserver = null
   window.removeEventListener('keydown', onKeyDown)
@@ -377,6 +433,22 @@ watch(
       <div class="row">
         <label class="label">label</label>
         <input v-model="labelInput" class="input" placeholder="例如 crack / scratch / screw_hole / ...（用户自定义）" />
+      </div>
+      <div class="row">
+        <label class="label">任务</label>
+        <button class="btn primary" type="button" :disabled="loading" @click="startAnnotateTask">
+          开始自动标注（M3 骨架）
+        </button>
+        <div class="task-meta mono">
+          <span v-if="image">image.status={{ image.status }}</span>
+          <span v-if="taskState.taskId"> · task={{ taskState.taskId.slice(0, 8) }}…</span>
+        </div>
+      </div>
+      <div v-if="taskState.taskId" class="task">
+        <progress class="progress" :value="taskState.progress" max="100" />
+        <div class="task-line mono">
+          {{ taskState.status }} · {{ taskState.progress }}% <span v-if="taskState.message">· {{ taskState.message }}</span>
+        </div>
       </div>
       <div class="hint">
         后续接入 LLM 时，将由自然语言提示词决定 label 的输出；当前阶段不做 label 白名单。
@@ -514,6 +586,31 @@ watch(
   color: inherit;
 }
 
+.task-meta {
+  opacity: 0.75;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.progress {
+  width: 100%;
+  height: 10px;
+}
+
+.task-line {
+  opacity: 0.8;
+  font-size: 12px;
+}
+
 .hint {
   margin-top: 10px;
   opacity: 0.75;
@@ -595,6 +692,10 @@ watch(
   padding: 6px 10px;
   border-radius: 9px;
   font-size: 12px;
+}
+
+.btn.primary {
+  border-color: rgba(99, 102, 241, 0.55);
 }
 
 .btn.danger {

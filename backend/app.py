@@ -15,6 +15,7 @@ from backend.routers.health import router as health_router
 from backend.routers.annotations import router as annotations_router
 from backend.routers.images import router as images_router
 from backend.routers.projects import router as projects_router
+from backend.routers.tasks import router as tasks_router
 
 
 def _json_safe(value):  # type: ignore[no-untyped-def]
@@ -73,5 +74,6 @@ def create_app() -> FastAPI:
     app.include_router(projects_router)
     app.include_router(images_router)
     app.include_router(annotations_router)
+    app.include_router(tasks_router)
 
     return app
