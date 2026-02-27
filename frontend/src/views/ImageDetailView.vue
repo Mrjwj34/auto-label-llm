@@ -231,7 +231,11 @@ async function onPointerUp(ev: PointerEvent) {
         ? String(err.message)
         : String(err)
   } finally {
-    stageRef.value?.releasePointerCapture?.(capturedPointerId)
+    try {
+      stageRef.value?.releasePointerCapture?.(capturedPointerId)
+    } catch {
+      // ignore
+    }
     drawing.pointerId = null
   }
 }
@@ -240,7 +244,13 @@ function onPointerCancel(ev: PointerEvent) {
   if (drawing.mode === 'idle') return
   ev.preventDefault()
   ev.stopPropagation()
-  if (drawing.pointerId != null) stageRef.value?.releasePointerCapture?.(drawing.pointerId)
+  if (drawing.pointerId != null) {
+    try {
+      stageRef.value?.releasePointerCapture?.(drawing.pointerId)
+    } catch {
+      // ignore
+    }
+  }
   drawing.mode = 'idle'
   drawing.moved = false
   drawing.pointerId = null
