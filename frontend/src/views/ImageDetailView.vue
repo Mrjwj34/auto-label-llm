@@ -143,8 +143,8 @@ function onPointerMove(ev: PointerEvent) {
 
 async function onPointerUp(ev: PointerEvent) {
   if (!drawing.active) return
-  drawing.active = false
   const bbox = draftBbox.value
+  drawing.active = false
   if (!bbox) return
   const [xmin, ymin, xmax, ymax] = bbox
   const w = xmax - xmin
