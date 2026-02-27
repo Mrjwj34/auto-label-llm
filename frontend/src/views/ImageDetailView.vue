@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { API_BASE_URL, api } from '../api/http'
 
@@ -38,12 +38,17 @@ const image = ref<ImageRow | null>(null)
 const annotations = ref<AnnotationRow[]>([])
 
 const labelInput = ref('object')
+
+type DrawMode = 'idle' | 'dragging' | 'armed'
+
 const drawing = reactive({
-  active: false,
+  mode: 'idle' as DrawMode,
   startX: 0,
   startY: 0,
   curX: 0,
   curY: 0,
+  pointerId: null as number | null,
+  moved: false,
 })
 
 const stageRef = ref<HTMLDivElement | null>(null)
@@ -93,7 +98,7 @@ function pointToNorm(ev: PointerEvent): { x: number; y: number } {
 }
 
 const draftBbox = computed<[number, number, number, number] | null>(() => {
-  if (!drawing.active) return null
+  if (drawing.mode === 'idle') return null
   const xmin = Math.min(drawing.startX, drawing.curX)
   const ymin = Math.min(drawing.startY, drawing.curY)
   const xmax = Math.max(drawing.startX, drawing.curX)
@@ -118,15 +123,65 @@ async function fetchImageAndAnnotations() {
   }
 }
 
+async function finalizeBbox(bbox: [number, number, number, number]) {
+  const [xmin, ymin, xmax, ymax] = bbox
+  const w = xmax - xmin
+  const h = ymax - ymin
+
+  // allow small boxes, but filter out accidental clicks
+  const minSide = 0.002
+  if (w < minSide || h < minSide) return
+
+  await api.post(`/api/images/${imageId.value}/annotations`, {
+    label: labelInput.value.trim(),
+    bbox,
+    source: 'manual',
+  })
+}
+
 function onPointerDown(ev: PointerEvent) {
   if (!canDraw.value) return
+  if (ev.button !== 0) return
+  ev.preventDefault()
+  ev.stopPropagation()
+
   if (!labelInput.value.trim()) {
     error.value = 'label 不能为空（用户自定义）'
     return
   }
   error.value = ''
+
   const p = pointToNorm(ev)
-  drawing.active = true
+
+  // second click: finalize in "armed" mode
+  if (drawing.mode === 'armed') {
+    drawing.curX = p.x
+    drawing.curY = p.y
+    const bbox = draftBbox.value
+    drawing.mode = 'idle'
+    drawing.moved = false
+    drawing.pointerId = null
+    if (bbox) {
+      void (async () => {
+        try {
+          await finalizeBbox(bbox)
+          await fetchImageAndAnnotations()
+        } catch (err: any) {
+          error.value = err?.response?.data?.message
+            ? String(err.response.data.message)
+            : err?.message
+              ? String(err.message)
+              : String(err)
+        }
+      })()
+    }
+    return
+  }
+
+  // first click: start dragging
+  drawing.mode = 'dragging'
+  drawing.moved = false
+  drawing.pointerId = ev.pointerId
   drawing.startX = p.x
   drawing.startY = p.y
   drawing.curX = p.x
@@ -135,28 +190,39 @@ function onPointerDown(ev: PointerEvent) {
 }
 
 function onPointerMove(ev: PointerEvent) {
-  if (!drawing.active) return
+  if (drawing.mode === 'idle') return
   const p = pointToNorm(ev)
+  if (drawing.mode === 'dragging') {
+    const dx = Math.abs(p.x - drawing.startX)
+    const dy = Math.abs(p.y - drawing.startY)
+    if (dx > 0.001 || dy > 0.001) drawing.moved = true
+  }
   drawing.curX = p.x
   drawing.curY = p.y
 }
 
 async function onPointerUp(ev: PointerEvent) {
-  if (!drawing.active) return
-  const bbox = draftBbox.value
-  drawing.active = false
-  if (!bbox) return
-  const [xmin, ymin, xmax, ymax] = bbox
-  const w = xmax - xmin
-  const h = ymax - ymin
-  if (w < 0.01 || h < 0.01) return
+  if (drawing.mode !== 'dragging') return
+  ev.preventDefault()
+  ev.stopPropagation()
 
+  const capturedPointerId = drawing.pointerId ?? ev.pointerId
   try {
-    await api.post(`/api/images/${imageId.value}/annotations`, {
-      label: labelInput.value.trim(),
-      bbox,
-      source: 'manual',
-    })
+    const bbox = draftBbox.value
+    const moved = drawing.moved
+
+    // Stop "dragging" first, so draft box doesn't flash.
+    drawing.mode = 'idle'
+    drawing.moved = false
+
+    // If it was a click (not moved), switch to "armed" mode for click-click drawing.
+    if (!moved) {
+      drawing.mode = 'armed'
+      return
+    }
+
+    if (!bbox) return
+    await finalizeBbox(bbox)
     await fetchImageAndAnnotations()
   } catch (err: any) {
     error.value = err?.response?.data?.message
@@ -165,8 +231,27 @@ async function onPointerUp(ev: PointerEvent) {
         ? String(err.message)
         : String(err)
   } finally {
-    stageRef.value?.releasePointerCapture?.(ev.pointerId)
+    stageRef.value?.releasePointerCapture?.(capturedPointerId)
+    drawing.pointerId = null
   }
+}
+
+function onPointerCancel(ev: PointerEvent) {
+  if (drawing.mode === 'idle') return
+  ev.preventDefault()
+  ev.stopPropagation()
+  if (drawing.pointerId != null) stageRef.value?.releasePointerCapture?.(drawing.pointerId)
+  drawing.mode = 'idle'
+  drawing.moved = false
+  drawing.pointerId = null
+}
+
+function onKeyDown(ev: KeyboardEvent) {
+  if (ev.key !== 'Escape') return
+  if (drawing.mode === 'idle') return
+  drawing.mode = 'idle'
+  drawing.moved = false
+  drawing.pointerId = null
 }
 
 function goDev() {
@@ -175,11 +260,24 @@ function goDev() {
 
 onMounted(() => {
   void fetchImageAndAnnotations()
+  window.addEventListener('keydown', onKeyDown)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeyDown)
 })
 
 watch(imageId, () => {
   void fetchImageAndAnnotations()
 })
+
+watch(
+  () => drawing.mode,
+  (m) => {
+    // Clear transient errors when user re-enters drawing.
+    if (m !== 'idle') error.value = ''
+  }
+)
 </script>
 
 <template>
@@ -188,7 +286,7 @@ watch(imageId, () => {
       <div>
         <h1>标注（bbox）</h1>
         <div class="sub">
-          Project #{{ projectId }} · Image #{{ imageId }} · 拖拽画框创建标注（label 用户自定义）
+          Project #{{ projectId }} · Image #{{ imageId }} · 单击一次开始/单击一次结束（也支持按住拖拽）· Esc 取消
         </div>
       </div>
       <div class="header-actions">
@@ -219,8 +317,9 @@ watch(imageId, () => {
         @pointerdown="onPointerDown"
         @pointermove="onPointerMove"
         @pointerup="onPointerUp"
+        @pointercancel="onPointerCancel"
       >
-        <img class="img" :src="fileSrc()" :alt="image.filename" />
+        <img class="img" :src="fileSrc()" :alt="image.filename" draggable="false" @dragstart.prevent />
         <svg class="overlay" :viewBox="viewBox()" preserveAspectRatio="xMinYMin meet">
           <g v-for="a in annotations" :key="a.id">
             <template v-if="a.bbox">
@@ -230,6 +329,7 @@ watch(imageId, () => {
                 :width="rectPx(a.bbox).width"
                 :height="rectPx(a.bbox).height"
                 class="bbox"
+                vector-effect="non-scaling-stroke"
               />
               <text :x="rectPx(a.bbox).x + 6" :y="rectPx(a.bbox).y + 16" class="label-text">
                 {{ a.label }} #{{ a.id }}
@@ -244,6 +344,7 @@ watch(imageId, () => {
               :width="rectPx(draftBbox).width"
               :height="rectPx(draftBbox).height"
               class="draft"
+              vector-effect="non-scaling-stroke"
             />
           </template>
         </svg>
@@ -252,7 +353,7 @@ watch(imageId, () => {
 
     <div class="card">
       <h2 class="h2">标注列表</h2>
-      <div v-if="annotations.length === 0" class="hint">暂无标注，拖拽画框创建一个。</div>
+      <div v-if="annotations.length === 0" class="hint">暂无标注：单击两次或拖拽画框创建一个。</div>
       <table v-else class="table">
         <thead>
           <tr>
@@ -337,6 +438,7 @@ watch(imageId, () => {
 .stage-inner {
   position: relative;
   user-select: none;
+  touch-action: none;
 }
 
 .img {
@@ -357,13 +459,13 @@ watch(imageId, () => {
 .bbox {
   fill: rgba(0, 255, 0, 0.08);
   stroke: rgba(0, 255, 0, 0.9);
-  stroke-width: 2;
+  stroke-width: 1;
 }
 
 .draft {
   fill: rgba(99, 102, 241, 0.12);
   stroke: rgba(99, 102, 241, 0.9);
-  stroke-width: 2;
+  stroke-width: 1;
   stroke-dasharray: 6 4;
 }
 
@@ -372,7 +474,7 @@ watch(imageId, () => {
   font-size: 14px;
   paint-order: stroke;
   stroke: rgba(0, 0, 0, 0.55);
-  stroke-width: 3px;
+  stroke-width: 2px;
 }
 
 .table {
