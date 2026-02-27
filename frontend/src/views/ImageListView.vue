@@ -77,6 +77,10 @@ function backToProjects() {
   router.push({ name: 'projects' })
 }
 
+function openImage(imgId: number) {
+  router.push({ name: 'project-image-detail', params: { projectId: projectId.value, imageId: imgId } })
+}
+
 onMounted(() => {
   void fetchImages()
 })
@@ -116,7 +120,7 @@ watch(projectId, () => {
       <div v-if="loading" class="hint">加载中…</div>
       <div v-else-if="images.length === 0" class="hint">暂无图片，先上传。</div>
       <div v-else class="grid">
-        <article v-for="img in images" :key="img.id" class="item">
+        <article v-for="img in images" :key="img.id" class="item" @click="openImage(img.id)">
           <div class="thumb">
             <img :src="imageSrc(img)" :alt="img.filename" loading="lazy" />
           </div>
@@ -131,6 +135,7 @@ watch(projectId, () => {
             <span class="dot">•</span>
             <span>status: {{ img.status }}</span>
           </div>
+          <div class="cta">点击进入标注</div>
         </article>
       </div>
     </div>
@@ -204,6 +209,11 @@ watch(projectId, () => {
   background: rgba(255, 255, 255, 0.03);
   border-radius: 12px;
   padding: 12px;
+  cursor: pointer;
+}
+
+.item:hover {
+  border-color: rgba(99, 102, 241, 0.45);
 }
 
 .thumb {
@@ -245,6 +255,12 @@ watch(projectId, () => {
 
 .dot {
   opacity: 0.6;
+}
+
+.cta {
+  margin-top: 10px;
+  opacity: 0.75;
+  font-size: 12px;
 }
 
 .btn {

@@ -16,6 +16,16 @@ from backend.routers.images import router as images_router
 from backend.routers.projects import router as projects_router
 
 
+def _json_safe(value):  # type: ignore[no-untyped-def]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    return str(value)
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
 
@@ -51,7 +61,7 @@ def create_app() -> FastAPI:
     async def handle_validation_error(_request, exc: RequestValidationError):  # type: ignore[no-untyped-def]
         return JSONResponse(
             status_code=400,
-            content={"code": 400, "message": "invalid request", "data": {"detail": exc.errors()}},
+            content={"code": 400, "message": "invalid request", "data": {"detail": _json_safe(exc.errors())}},
         )
 
     @app.get("/healthz")
