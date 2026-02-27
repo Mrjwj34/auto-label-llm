@@ -52,6 +52,17 @@ const drawing = reactive({
 })
 
 const stageRef = ref<HTMLDivElement | null>(null)
+const stageSize = reactive({ width: 0, height: 0 })
+
+function updateStageSize() {
+  const stage = stageRef.value
+  if (!stage) return
+  const rect = stage.getBoundingClientRect()
+  stageSize.width = rect.width
+  stageSize.height = rect.height
+}
+
+let resizeObserver: ResizeObserver | null = null
 
 const canDraw = computed(() => !!image.value && !!stageRef.value)
 
@@ -96,6 +107,29 @@ function pointToNorm(ev: PointerEvent): { x: number; y: number } {
   const y = clamp01((ev.clientY - rect.top) / rect.height)
   return { x, y }
 }
+
+function userUnitsFromScreenPx(px: number): number {
+  const imgW = image.value?.width ?? 0
+  if (!imgW) return px
+
+  const stageW = stageSize.width || stageRef.value?.getBoundingClientRect().width || 0
+  if (!stageW) return px
+
+  const scale = stageW / imgW
+  if (scale <= 0) return px
+
+  return px / scale
+}
+
+const labelFontSize = computed(() => {
+  // Keep label readable on screen regardless of original image resolution.
+  const desiredPx = 12
+  const userUnits = userUnitsFromScreenPx(desiredPx)
+  return Math.max(6, Math.min(48, userUnits))
+})
+
+const labelOffsetX = computed(() => userUnitsFromScreenPx(6))
+const labelOffsetY = computed(() => userUnitsFromScreenPx(16))
 
 const draftBbox = computed<[number, number, number, number] | null>(() => {
   if (drawing.mode === 'idle') return null
@@ -264,21 +298,52 @@ function onKeyDown(ev: KeyboardEvent) {
   drawing.pointerId = null
 }
 
+async function deleteAnnotation(annotationId: number) {
+  if (!confirm(`删除标注 #${annotationId}？`)) return
+  error.value = ''
+  try {
+    await api.delete(`/api/annotations/${annotationId}`)
+    await fetchImageAndAnnotations()
+  } catch (err: any) {
+    error.value = err?.response?.data?.message
+      ? String(err.response.data.message)
+      : err?.message
+        ? String(err.message)
+        : String(err)
+  }
+}
+
 function goDev() {
   router.push({ name: 'dev' })
 }
 
 onMounted(() => {
   void fetchImageAndAnnotations()
+  resizeObserver = new ResizeObserver(() => updateStageSize())
+  if (stageRef.value) {
+    resizeObserver.observe(stageRef.value)
+    updateStageSize()
+  }
   window.addEventListener('keydown', onKeyDown)
 })
 
 onBeforeUnmount(() => {
+  resizeObserver?.disconnect()
+  resizeObserver = null
   window.removeEventListener('keydown', onKeyDown)
 })
 
 watch(imageId, () => {
   void fetchImageAndAnnotations()
+})
+
+watch(stageRef, (el, prevEl) => {
+  if (!resizeObserver) return
+  if (prevEl) resizeObserver.unobserve(prevEl)
+  if (el) {
+    resizeObserver.observe(el)
+    updateStageSize()
+  }
 })
 
 watch(
@@ -341,7 +406,12 @@ watch(
                 class="bbox"
                 vector-effect="non-scaling-stroke"
               />
-              <text :x="rectPx(a.bbox).x + 6" :y="rectPx(a.bbox).y + 16" class="label-text">
+              <text
+                :x="rectPx(a.bbox).x + labelOffsetX"
+                :y="rectPx(a.bbox).y + labelOffsetY"
+                :font-size="labelFontSize"
+                class="label-text"
+              >
                 {{ a.label }} #{{ a.id }}
               </text>
             </template>
@@ -372,6 +442,7 @@ watch(
             <th>Bbox(0..1)</th>
             <th>Source</th>
             <th>Confirmed</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -381,6 +452,9 @@ watch(
             <td class="mono">{{ a.bbox }}</td>
             <td class="mono">{{ a.source }}</td>
             <td class="mono">{{ a.is_confirmed }}</td>
+            <td>
+              <button class="btn danger small" type="button" @click="deleteAnnotation(a.id)">删除</button>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -481,7 +555,6 @@ watch(
 
 .label-text {
   fill: rgba(0, 255, 0, 0.95);
-  font-size: 14px;
   paint-order: stroke;
   stroke: rgba(0, 0, 0, 0.55);
   stroke-width: 2px;
@@ -516,6 +589,16 @@ watch(
   color: inherit;
   padding: 8px 12px;
   border-radius: 10px;
+}
+
+.btn.small {
+  padding: 6px 10px;
+  border-radius: 9px;
+  font-size: 12px;
+}
+
+.btn.danger {
+  border-color: rgba(248, 81, 73, 0.55);
 }
 
 .btn:hover {

@@ -61,3 +61,19 @@ def test_create_annotation_rejects_out_of_range_bbox(client):
     )
     assert bad.status_code == 400
 
+
+def test_delete_annotation(client):
+    image_id = _create_project_with_image(client)
+
+    create = client.post(
+        f"/api/images/{image_id}/annotations",
+        json={"label": "obj", "bbox": [0.1, 0.1, 0.4, 0.4]},
+    )
+    ann_id = create.json()["data"]["id"]
+
+    resp = client.delete(f"/api/annotations/{ann_id}")
+    assert resp.status_code == 200
+
+    lst = client.get(f"/api/images/{image_id}/annotations")
+    assert lst.status_code == 200
+    assert lst.json()["data"] == []

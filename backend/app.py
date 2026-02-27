@@ -12,6 +12,7 @@ from backend.api import AppError, ok
 from backend.config import get_settings
 from backend.database import init_db
 from backend.routers.health import router as health_router
+from backend.routers.annotations import router as annotations_router
 from backend.routers.images import router as images_router
 from backend.routers.projects import router as projects_router
 
@@ -71,5 +72,6 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(projects_router)
     app.include_router(images_router)
+    app.include_router(annotations_router)
 
     return app
