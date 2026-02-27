@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import io
 import mimetypes
 from datetime import datetime
@@ -37,6 +38,14 @@ class AnnotationCreateIn(BaseModel):
     confidence: float | None = None
     source: Literal["auto", "manual", "corrected"] = "manual"
 
+    @field_validator("label")
+    @classmethod
+    def validate_label(cls, v: str) -> str:
+        s = v.strip()
+        if not s:
+            raise ValueError("label must be non-empty")
+        return s
+
     @field_validator("bbox")
     @classmethod
     def validate_bbox(cls, v: list[float]) -> list[float]:
@@ -53,10 +62,6 @@ class AnnotationCreateIn(BaseModel):
         if xmin == xmax or ymin == ymax:
             raise ValueError("bbox must have non-zero area")
         return [xmin, ymin, xmax, ymax]
-
-
-class AnnotateIn(BaseModel):
-    prompt: str | None = None
 
 
 def _image_to_dict(img: Image) -> dict[str, Any]:
@@ -212,6 +217,20 @@ def create_annotation(image_id: int, payload: AnnotationCreateIn, db: Session = 
     if image is None:
         raise AppError(404, "image not found")
 
+    project = db.get(Project, image.project_id)
+    labels: list[str] = []
+    if project is not None and project.config:
+        try:
+            cfg = json.loads(project.config)
+            raw = cfg.get("labels")
+            if isinstance(raw, list) and all(isinstance(x, str) for x in raw):
+                labels = [x.strip() for x in raw if x and x.strip()]
+        except Exception:
+            labels = []
+
+    if labels and payload.label not in labels:
+        raise AppError(400, "label must be one of project's labels")
+
     ann = Annotation(
         image_id=image_id,
         label=payload.label,
@@ -226,7 +245,7 @@ def create_annotation(image_id: int, payload: AnnotationCreateIn, db: Session = 
 
 
 @router.post("/images/{image_id}/annotate")
-def annotate_image(image_id: int, _payload: AnnotateIn, db: Session = Depends(get_db)):
+def annotate_image(image_id: int, db: Session = Depends(get_db)):
     image = db.get(Image, image_id)
     if image is None:
         raise AppError(404, "image not found")

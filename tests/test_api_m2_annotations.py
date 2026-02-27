@@ -77,3 +77,28 @@ def test_delete_annotation(client):
     lst = client.get(f"/api/images/{image_id}/annotations")
     assert lst.status_code == 200
     assert lst.json()["data"] == []
+
+
+def test_create_annotation_rejects_label_not_in_project_labels(client):
+    p = client.post("/api/projects", json={"name": "p1", "task_type": "detection"})
+    project_id = p.json()["data"]["id"]
+    resp = client.patch(f"/api/projects/{project_id}/settings", json={"labels": ["crack", "scratch"]})
+    assert resp.status_code == 200
+
+    up = client.post(
+        f"/api/projects/{project_id}/images/upload",
+        files=[("files[]", ("a.png", _make_png_bytes(), "image/png"))],
+    )
+    image_id = up.json()["data"]["image_ids"][0]
+
+    bad = client.post(
+        f"/api/images/{image_id}/annotations",
+        json={"label": "other", "bbox": [0.1, 0.1, 0.4, 0.4]},
+    )
+    assert bad.status_code == 400
+
+    ok_resp = client.post(
+        f"/api/images/{image_id}/annotations",
+        json={"label": "crack", "bbox": [0.1, 0.1, 0.4, 0.4]},
+    )
+    assert ok_resp.status_code == 200

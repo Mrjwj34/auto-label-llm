@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { API_BASE_URL, api } from '../api/http'
 
@@ -28,10 +28,27 @@ const selectedFiles = ref<File[]>([])
 
 const canUpload = computed(() => selectedFiles.value.length > 0 && !uploading.value)
 
+const labelsText = ref('')
+const labelsSaving = ref(false)
+
+const taskState = reactive({
+  taskId: '' as string,
+  status: '' as string,
+  progress: 0 as number,
+  message: '' as string,
+})
+
+let pollTimer: ReturnType<typeof setInterval> | null = null
+
 function imageSrc(img: ImageRow): string {
   const base = API_BASE_URL.replace(/\/$/, '')
   const path = img.file_url.startsWith('/') ? img.file_url : `/${img.file_url}`
   return `${base}${path}`
+}
+
+function stopPolling() {
+  if (pollTimer) clearInterval(pollTimer)
+  pollTimer = null
 }
 
 async function fetchImages() {
@@ -45,6 +62,19 @@ async function fetchImages() {
     error.value = err?.message ? String(err.message) : String(err)
   } finally {
     loading.value = false
+  }
+}
+
+async function fetchProjectSettings() {
+  if (!Number.isFinite(projectId.value) || projectId.value <= 0) return
+  try {
+    const resp = await api.get(`/api/projects/${projectId.value}/settings`)
+    const labels = resp.data?.data?.labels
+    if (Array.isArray(labels)) {
+      labelsText.value = labels.join(', ')
+    }
+  } catch {
+    // non-blocking
   }
 }
 
@@ -81,12 +111,95 @@ function openImage(imgId: number) {
   router.push({ name: 'project-image-detail', params: { projectId: projectId.value, imageId: imgId } })
 }
 
+function parseLabels(text: string): string[] {
+  const raw = text
+    .split(/[,\n]/g)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  const seen = new Set<string>()
+  const cleaned: string[] = []
+  for (const s of raw) {
+    if (seen.has(s)) continue
+    cleaned.push(s)
+    seen.add(s)
+  }
+  return cleaned
+}
+
+async function saveLabels() {
+  labelsSaving.value = true
+  error.value = ''
+  try {
+    const labels = parseLabels(labelsText.value)
+    await api.patch(`/api/projects/${projectId.value}/settings`, { labels })
+    await fetchProjectSettings()
+  } catch (err: any) {
+    error.value = err?.response?.data?.message
+      ? String(err.response.data.message)
+      : err?.message
+        ? String(err.message)
+        : String(err)
+  } finally {
+    labelsSaving.value = false
+  }
+}
+
+async function fetchTaskStatus(taskId: string) {
+  const resp = await api.get(`/api/tasks/${taskId}/status`)
+  const data = resp.data?.data
+  taskState.status = String(data?.status ?? '')
+  taskState.progress = Number(data?.progress ?? 0)
+  taskState.message = String(data?.message ?? '')
+
+  // Update list while running so the user sees per-image status changes.
+  if (taskState.status === 'STARTED') {
+    void fetchImages()
+  }
+  if (taskState.status === 'SUCCESS' || taskState.status === 'FAILURE') {
+    stopPolling()
+    await fetchImages()
+  }
+}
+
+async function startBatchAnnotate() {
+  error.value = ''
+  try {
+    stopPolling()
+    taskState.taskId = ''
+    taskState.status = ''
+    taskState.progress = 0
+    taskState.message = ''
+
+    const resp = await api.post(`/api/projects/${projectId.value}/annotate`, { only_pending: true })
+    taskState.taskId = String(resp.data?.data?.task_id ?? '')
+    if (!taskState.taskId) throw new Error('no task_id returned')
+
+    await fetchTaskStatus(taskState.taskId)
+    pollTimer = setInterval(() => {
+      if (!taskState.taskId) return
+      void fetchTaskStatus(taskState.taskId)
+    }, 700)
+  } catch (err: any) {
+    error.value = err?.response?.data?.message
+      ? String(err.response.data.message)
+      : err?.message
+        ? String(err.message)
+        : String(err)
+  }
+}
+
 onMounted(() => {
   void fetchImages()
+  void fetchProjectSettings()
+})
+
+onBeforeUnmount(() => {
+  stopPolling()
 })
 
 watch(projectId, () => {
   void fetchImages()
+  void fetchProjectSettings()
 })
 </script>
 
@@ -114,6 +227,35 @@ watch(projectId, () => {
       </div>
       <div v-if="selectedFiles.length > 0" class="hint">已选择 {{ selectedFiles.length }} 个文件</div>
       <div v-if="error" class="error">{{ error }}</div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <label class="label">Labels</label>
+        <input
+          v-model="labelsText"
+          class="input"
+          placeholder="用逗号分隔，例如：crack, scratch, screw_hole"
+        />
+        <button class="btn" type="button" :disabled="labelsSaving" @click="saveLabels">
+          {{ labelsSaving ? '保存中…' : '保存' }}
+        </button>
+      </div>
+      <div class="hint">
+        本系统不接收用户自然语言提示词；只使用项目 Labels 列表 + 固定系统提示词做 grounding，以降低提示词攻击风险。
+      </div>
+      <div class="row">
+        <button class="btn primary" type="button" :disabled="loading" @click="startBatchAnnotate">
+          批量自动标注（M3 骨架）
+        </button>
+        <div v-if="taskState.taskId" class="task-meta">
+          task={{ taskState.taskId.slice(0, 8) }}… · {{ taskState.status }} · {{ taskState.progress }}%
+        </div>
+      </div>
+      <div v-if="taskState.taskId" class="task">
+        <progress class="progress" :value="taskState.progress" max="100" />
+        <div class="hint mono">{{ taskState.message }}</div>
+      </div>
     </div>
 
     <div class="list">
@@ -180,6 +322,11 @@ watch(projectId, () => {
   align-items: center;
 }
 
+.label {
+  width: 70px;
+  opacity: 0.75;
+}
+
 .input {
   flex: 1;
   padding: 8px 10px;
@@ -196,6 +343,28 @@ watch(projectId, () => {
 
 .hint {
   opacity: 0.75;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+}
+
+.task {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.progress {
+  width: 100%;
+  height: 10px;
+}
+
+.task-meta {
+  opacity: 0.8;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
 }
 
 .grid {

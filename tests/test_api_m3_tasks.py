@@ -19,11 +19,15 @@ def test_annotate_task_progress_and_completion(client):
 
     up = client.post(
         f"/api/projects/{project_id}/images/upload",
-        files=[("files[]", ("a.png", _make_png_bytes(), "image/png"))],
+        files=[
+            ("files[]", ("a.png", _make_png_bytes(), "image/png")),
+            ("files[]", ("b.png", _make_png_bytes(), "image/png")),
+        ],
     )
-    image_id = up.json()["data"]["image_ids"][0]
+    image_ids = up.json()["data"]["image_ids"]
+    assert len(image_ids) == 2
 
-    start = client.post(f"/api/images/{image_id}/annotate", json={"prompt": "stub"})
+    start = client.post(f"/api/projects/{project_id}/annotate", json={"only_pending": True})
     assert start.status_code == 200
     task_id = start.json()["data"]["task_id"]
     assert isinstance(task_id, str) and task_id
@@ -44,9 +48,9 @@ def test_annotate_task_progress_and_completion(client):
     assert last is not None
     assert last["status"] == "SUCCESS"
 
-    # Image status should become done
+    # Image status should become done (batch)
     lst = client.get(f"/api/projects/{project_id}/images")
     rows = lst.json()["data"]
-    assert rows[0]["id"] == image_id
-    assert rows[0]["status"] == "done"
-
+    assert len(rows) == 2
+    assert {r["id"] for r in rows} == set(image_ids)
+    assert all(r["status"] == "done" for r in rows)

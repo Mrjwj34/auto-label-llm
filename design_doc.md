@@ -262,11 +262,11 @@ logs/
 | `tasks/annotation_task.py`：串联三级流水线，结果写 DB |
 | `utils/gpu_lock.py`：GPU 互斥（Redis Lock 或单队列单并发），避免 FastAPI/Celery 多进程并发导致 OOM |
 | Celery 配置：启用 Redis result backend，保证任务状态查询与 WS 推送可用 |
-| 标注触发接口：`POST /api/images/{id}/annotate`，返回 task_id |
+| **批量标注触发接口（项目级）**：`POST /api/projects/{id}/annotate`（默认标注 pending 图片，可选指定 `image_ids`），返回 task_id |
 | 任务状态接口：`GET /api/tasks/{task_id}/status` |
 | 前端标注画布：Fabric.js 渲染 Bbox 矩形、Mask 多边形轮廓、类别标签 |
 
-**验收：** 上传图片 → 点击自动标注 → 前端渲染 Bbox 和 Mask。
+**验收：** 上传图片 → 点击“批量自动标注” → 前端看到进度与图片状态变化 → 进入图片详情可看到标注结果。
 
 ---
 
@@ -407,7 +407,14 @@ SYSTEM_PROMPT = (
     "边界框格式为 [xmin, ymin, xmax, ymax]，坐标归一化到 0~1 范围。"
 )
 
-async def detect_objects(image_b64: str, user_prompt: str) -> dict:
+def build_grounding_prompt(labels: list[str]) -> str:
+    # 固定系统提示词 + 用户配置 labels 列表（不接收用户自由文本），降低提示词攻击风险
+    if labels:
+        labels_text = ", ".join(labels)
+        return f"请仅检测图中属于以下类别列表的目标：{labels_text}。不在列表中的对象请忽略。"
+    return "请检测图中所有目标。"
+
+async def detect_objects(image_b64: str, labels: list[str]) -> dict:
     payload = {
         "model": "qwen3-vl",
         "messages": [
@@ -416,7 +423,7 @@ async def detect_objects(image_b64: str, user_prompt: str) -> dict:
                 "role": "user",
                 "content": [
                     {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
-                    {"type": "text", "text": user_prompt or "请标注图中所有目标。"}
+                    {"type": "text", "text": build_grounding_prompt(labels)}
                 ]
             }
         ],
@@ -517,13 +524,13 @@ def smooth_mask(mask: np.ndarray, epsilon_ratio: float = 0.002) -> list:
 ```python
 # tasks/annotation_task.py
 @celery_app.task(bind=True, max_retries=5)
-def run_annotation(self, image_id: int, user_prompt: str, task_type: str):
+def run_annotation(self, image_id: int, labels: list[str], task_type: str):
     try:
         with GPULock.acquire(timeout=5):
             image = load_image(image_id)
             image_b64 = to_base64(image)
 
-            result = asyncio.run(detect_objects(image_b64, user_prompt))
+            result = asyncio.run(detect_objects(image_b64, labels))
 
             for obj in result["objects"]:
                 bbox_norm = obj["bbox"]
@@ -800,6 +807,7 @@ project-root/
 {
   "code": 200, "message": "ok",
   "data": {
+    "labels": ["crack", "scratch"],
     "model_profile": "auto",
     "sam": { "checkpoint": "sam2_hiera_tiny", "device": "cuda" },
     "postprocess": { "enable_close": true, "close_kernel": 5, "epsilon_ratio": 0.002 }
@@ -859,10 +867,12 @@ project-root/
 
 ### 标注操作
 
-**POST `/api/images/{id}/annotate`**
+**POST `/api/projects/{id}/annotate`**（项目级批处理）
 ```json
 // Request
-{ "prompt": "请标注图中所有螺丝孔缺陷。" }
+{ "only_pending": true }
+// 或（可选）指定部分图片
+{ "image_ids": [10, 11, 12] }
 // Response 200
 { "code": 200, "message": "ok", "data": { "task_id": "abc-123" } }
 ```
@@ -1128,6 +1138,7 @@ def test_get_nonexistent_image_annotations():
 
 ```jsonc
 {
+  "labels": ["crack", "scratch"],
   "model_profile": "auto",               // 'dev_6gb'|'demo_32gb'|'auto'|'fixed'
   "llm": {
     "base_model": "qwen3-vl-2b",         // fixed 时使用

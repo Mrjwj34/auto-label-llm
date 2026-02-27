@@ -37,16 +37,8 @@ const error = ref<string>('')
 const image = ref<ImageRow | null>(null)
 const annotations = ref<AnnotationRow[]>([])
 
-const labelInput = ref('object')
-
-const taskState = reactive({
-  taskId: '' as string,
-  status: '' as string,
-  progress: 0 as number,
-  message: '' as string,
-})
-
-let pollTimer: ReturnType<typeof setInterval> | null = null
+const projectLabels = ref<string[]>([])
+const selectedLabel = ref<string>('')
 
 type DrawMode = 'idle' | 'dragging' | 'armed'
 
@@ -73,7 +65,7 @@ function updateStageSize() {
 
 let resizeObserver: ResizeObserver | null = null
 
-const canDraw = computed(() => !!image.value && !!stageRef.value)
+const canDraw = computed(() => !!image.value && !!stageRef.value && !!selectedLabel.value)
 
 function back() {
   router.push({ name: 'project-images', params: { projectId: projectId.value } })
@@ -166,49 +158,20 @@ async function fetchImageAndAnnotations() {
   }
 }
 
-async function fetchTaskStatus(taskId: string) {
-  const resp = await api.get(`/api/tasks/${taskId}/status`)
-  const data = resp.data?.data
-  taskState.status = String(data?.status ?? '')
-  taskState.progress = Number(data?.progress ?? 0)
-  taskState.message = String(data?.message ?? '')
-
-  if (taskState.status === 'SUCCESS' || taskState.status === 'FAILURE') {
-    stopTaskPolling()
-    await fetchImageAndAnnotations()
-  }
-}
-
-function stopTaskPolling() {
-  if (pollTimer) clearInterval(pollTimer)
-  pollTimer = null
-}
-
-async function startAnnotateTask() {
-  if (!image.value) return
-  error.value = ''
+async function fetchProjectSettings() {
+  if (!Number.isFinite(projectId.value) || projectId.value <= 0) return
   try {
-    stopTaskPolling()
-    taskState.taskId = ''
-    taskState.status = ''
-    taskState.progress = 0
-    taskState.message = ''
-
-    const resp = await api.post(`/api/images/${imageId.value}/annotate`, { prompt: '' })
-    taskState.taskId = String(resp.data?.data?.task_id ?? '')
-    if (!taskState.taskId) throw new Error('no task_id returned')
-
-    await fetchTaskStatus(taskState.taskId)
-    pollTimer = setInterval(() => {
-      if (!taskState.taskId) return
-      void fetchTaskStatus(taskState.taskId)
-    }, 600)
-  } catch (err: any) {
-    error.value = err?.response?.data?.message
-      ? String(err.response.data.message)
-      : err?.message
-        ? String(err.message)
-        : String(err)
+    const resp = await api.get(`/api/projects/${projectId.value}/settings`)
+    const labels = resp.data?.data?.labels
+    if (Array.isArray(labels)) {
+      projectLabels.value = labels.filter((x: any) => typeof x === 'string' && x.trim()).map((s: string) => s.trim())
+      if (!selectedLabel.value && projectLabels.value.length > 0) selectedLabel.value = projectLabels.value[0] ?? ''
+      if (selectedLabel.value && !projectLabels.value.includes(selectedLabel.value)) {
+        selectedLabel.value = projectLabels.value[0] ?? ''
+      }
+    }
+  } catch {
+    // non-blocking
   }
 }
 
@@ -222,7 +185,7 @@ async function finalizeBbox(bbox: [number, number, number, number]) {
   if (w < minSide || h < minSide) return
 
   await api.post(`/api/images/${imageId.value}/annotations`, {
-    label: labelInput.value.trim(),
+    label: selectedLabel.value,
     bbox,
     source: 'manual',
   })
@@ -234,10 +197,7 @@ function onPointerDown(ev: PointerEvent) {
   ev.preventDefault()
   ev.stopPropagation()
 
-  if (!labelInput.value.trim()) {
-    error.value = 'label 不能为空（用户自定义）'
-    return
-  }
+  if (!selectedLabel.value) return
   error.value = ''
 
   const p = pointToNorm(ev)
@@ -374,6 +334,7 @@ function goDev() {
 
 onMounted(() => {
   void fetchImageAndAnnotations()
+  void fetchProjectSettings()
   resizeObserver = new ResizeObserver(() => updateStageSize())
   if (stageRef.value) {
     resizeObserver.observe(stageRef.value)
@@ -383,7 +344,6 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  stopTaskPolling()
   resizeObserver?.disconnect()
   resizeObserver = null
   window.removeEventListener('keydown', onKeyDown)
@@ -391,6 +351,10 @@ onBeforeUnmount(() => {
 
 watch(imageId, () => {
   void fetchImageAndAnnotations()
+})
+
+watch(projectId, () => {
+  void fetchProjectSettings()
 })
 
 watch(stageRef, (el, prevEl) => {
@@ -432,26 +396,15 @@ watch(
     <div class="controls card">
       <div class="row">
         <label class="label">label</label>
-        <input v-model="labelInput" class="input" placeholder="例如 crack / scratch / screw_hole / ...（用户自定义）" />
-      </div>
-      <div class="row">
-        <label class="label">任务</label>
-        <button class="btn primary" type="button" :disabled="loading" @click="startAnnotateTask">
-          开始自动标注（M3 骨架）
-        </button>
-        <div class="task-meta mono">
-          <span v-if="image">image.status={{ image.status }}</span>
-          <span v-if="taskState.taskId"> · task={{ taskState.taskId.slice(0, 8) }}…</span>
-        </div>
-      </div>
-      <div v-if="taskState.taskId" class="task">
-        <progress class="progress" :value="taskState.progress" max="100" />
-        <div class="task-line mono">
-          {{ taskState.status }} · {{ taskState.progress }}% <span v-if="taskState.message">· {{ taskState.message }}</span>
+        <select v-model="selectedLabel" class="input" :disabled="projectLabels.length === 0">
+          <option v-for="l in projectLabels" :key="l" :value="l">{{ l }}</option>
+        </select>
+        <div v-if="projectLabels.length === 0" class="inline-warn">
+          请先在项目“图片列表”页配置 labels
         </div>
       </div>
       <div class="hint">
-        后续接入 LLM 时，将由自然语言提示词决定 label 的输出；当前阶段不做 label 白名单。
+        本系统不接收用户自然语言提示词；自动标注使用固定系统提示词 + labels 列表做 grounding。批量自动标注请在“图片列表”页触发。
       </div>
     </div>
 
@@ -484,7 +437,7 @@ watch(
                 :font-size="labelFontSize"
                 class="label-text"
               >
-                {{ a.label }} #{{ a.id }}
+                {{ a.label }}
               </text>
             </template>
           </g>
@@ -586,29 +539,11 @@ watch(
   color: inherit;
 }
 
-.task-meta {
-  opacity: 0.75;
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.task {
-  margin-top: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.progress {
-  width: 100%;
-  height: 10px;
-}
-
-.task-line {
+.inline-warn {
   opacity: 0.8;
   font-size: 12px;
+  color: rgba(248, 81, 73, 0.95);
+  white-space: nowrap;
 }
 
 .hint {
