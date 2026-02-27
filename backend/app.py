@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,12 +12,19 @@ from backend.api import AppError, ok
 from backend.config import get_settings
 from backend.database import init_db
 from backend.routers.health import router as health_router
+from backend.routers.images import router as images_router
+from backend.routers.projects import router as projects_router
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
 
-    app = FastAPI(title="Auto Labeling System", version="0.1.0")
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):  # noqa: ANN001
+        init_db()
+        yield
+
+    app = FastAPI(title="Auto Labeling System", version="0.1.0", lifespan=lifespan)
 
     app.add_middleware(
         CORSMiddleware,
@@ -50,10 +59,7 @@ def create_app() -> FastAPI:
         return ok({"status": "ok"})
 
     app.include_router(health_router)
-
-    @app.on_event("startup")
-    async def _startup() -> None:
-        init_db()
+    app.include_router(projects_router)
+    app.include_router(images_router)
 
     return app
-

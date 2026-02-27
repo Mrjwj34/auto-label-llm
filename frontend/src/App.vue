@@ -1,9 +1,12 @@
 <template>
   <div class="app">
     <header class="topbar">
-      <div class="brand">Auto Labeling System</div>
+      <div class="brand">
+        <router-link class="brand-link" to="/">Auto Labeling System</router-link>
+      </div>
       <nav class="nav">
-        <a class="link" href="/">Home</a>
+        <router-link class="link" to="/">Projects</router-link>
+        <router-link class="link" to="/dev">Dev</router-link>
       </nav>
     </header>
     <main class="content">
@@ -30,6 +33,11 @@
 .brand {
   font-weight: 650;
   letter-spacing: 0.2px;
+}
+
+.brand-link {
+  color: inherit;
+  text-decoration: none;
 }
 
 .nav {

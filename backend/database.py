@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from functools import lru_cache
+
 from sqlalchemy import Engine, event, text
 from sqlalchemy.engine import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -8,7 +10,8 @@ from backend.config import get_settings
 from backend.models.base import Base
 
 
-def _create_engine() -> Engine:
+@lru_cache
+def get_engine() -> Engine:
     settings = get_settings()
     engine = create_engine(
         settings.resolved_database_url,
@@ -26,14 +29,18 @@ def _create_engine() -> Engine:
     return engine
 
 
-engine = _create_engine()
-SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False, class_=Session)
+@lru_cache
+def get_session_factory() -> sessionmaker[Session]:
+    return sessionmaker(bind=get_engine(), autocommit=False, autoflush=False, class_=Session)
 
 
 def init_db() -> None:
+    # Ensure models are imported so they are registered on Base.metadata
+    import backend.models  # noqa: F401
+
+    engine = get_engine()
     Base.metadata.create_all(bind=engine)
 
-    # lightweight sanity check (also warms up the connection)
     with engine.connect() as conn:
         conn.execute(text("SELECT 1"))
 
