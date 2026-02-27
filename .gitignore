@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Node / frontend
+node_modules/
+dist/
+.vite/
+
+# Local artifacts
+data/
+models/
+logs/
+configs/app.local.yaml
+.env
+
+# OS
+Thumbs.db
+Desktop.ini
+
