@@ -42,7 +42,7 @@
 | M1 | 项目/图片基础闭环 | 上传图片 → 列表展示 → 打开查看 | ✅ | 79bc7d8 |
 | M2 | 标注数据模型与读写 | 能保存/读取 bbox(检测) 标注 | ✅ | 2c3ad61 |
 | M3 | 异步任务骨架与进度 | 项目级批量标注，任务进度可见 | ✅ | 91f571e |
-| M4 | 自动标注（LLM Stub → 真实接入） | 自动生成 bbox，并写入 DB | ⬜ | - |
+| M4 | 自动标注（LLM Stub → 真实接入） | 自动生成 bbox，并写入 DB | 🟡 | 53d2d7b |
 | M5 | 分割能力（SAM Stub → 真实接入） | 生成 mask/polygon 并渲染 | ⬜ | - |
 | M6 | 人工纠错（增删改确认） | 点选/补框/删除/确认生效 | ⬜ | - |
 | M7 | 数据集导入/导出 | 导出 YOLO/COCO（最小可用） | ⬜ | - |
@@ -232,3 +232,4 @@
 | 2026-02-27 | M2 | ⏳ → ✅ | 2c3ad61 | `pytest -q`、`npm run build` | ✅ 通过 | bbox 标注 + 删除 + label 自适应显示 |
 | 2026-02-27 | M3 | ⬜ → 🟡 | 91f571e | `pytest -q`、`npm run build` | ⏳ 待验收 | 项目级批处理标注 + 固定 prompt + labels 列表 |
 | 2026-02-27 | M3 | 🟡 → ✅ | 91f571e | `pytest -q`、`npm run build` | ✅ 通过 | 批处理标注任务验收通过 |
+| 2026-03-24 | M4 | ⬜ → 🟡 | 53d2d7b | `.venv\Scripts\python.exe -m compileall backend`、`.venv\Scripts\python.exe -m pytest -q`、`npm run build` | ⏳ 待验收 | 自动生成 bbox 写库 + OpenAI-compatible 预留接入与 stub 回退 |
