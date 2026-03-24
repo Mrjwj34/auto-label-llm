@@ -30,6 +30,8 @@ const canUpload = computed(() => selectedFiles.value.length > 0 && !uploading.va
 
 const labelsText = ref('')
 const labelsSaving = ref(false)
+const projectLabels = computed(() => parseLabels(labelsText.value))
+const canStartAnnotate = computed(() => !loading.value && projectLabels.value.length > 0)
 
 const taskState = reactive({
   taskId: '' as string,
@@ -163,6 +165,10 @@ async function fetchTaskStatus(taskId: string) {
 
 async function startBatchAnnotate() {
   error.value = ''
+  if (projectLabels.value.length === 0) {
+    error.value = 'Please configure at least one label before running auto annotation.'
+    return
+  }
   try {
     stopPolling()
     taskState.taskId = ''
@@ -245,12 +251,15 @@ watch(projectId, () => {
         本系统不接收用户自然语言提示词；只使用项目 Labels 列表 + 固定系统提示词做 grounding，以降低提示词攻击风险。
       </div>
       <div class="row">
-        <button class="btn primary" type="button" :disabled="loading" @click="startBatchAnnotate">
-          批量自动标注（M3 骨架）
+        <button class="btn primary" type="button" :disabled="!canStartAnnotate" @click="startBatchAnnotate">
+          Batch Auto Annotate (M4)
         </button>
         <div v-if="taskState.taskId" class="task-meta">
           task={{ taskState.taskId.slice(0, 8) }}… · {{ taskState.status }} · {{ taskState.progress }}%
         </div>
+      </div>
+      <div v-if="projectLabels.length === 0" class="hint warn">
+        Save at least one label before starting auto annotation.
       </div>
       <div v-if="taskState.taskId" class="task">
         <progress class="progress" :value="taskState.progress" max="100" />
@@ -343,6 +352,10 @@ watch(projectId, () => {
 
 .hint {
   opacity: 0.75;
+}
+
+.hint.warn {
+  color: rgba(248, 81, 73, 0.95);
 }
 
 .mono {

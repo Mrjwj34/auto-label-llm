@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -16,6 +16,13 @@ class Settings(BaseSettings):
     database_url: str | None = None
 
     cors_allow_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
+    annotation_backend: Literal["stub", "openai_compatible"] = "stub"
+    vllm_base_url: str = "http://127.0.0.1:8001"
+    vllm_api_key: str = ""
+    vllm_model_name: str = ""
+    llm_request_timeout_seconds: float = 30.0
+    llm_max_retries: int = 1
+    llm_max_tokens: int = 2048
 
     host: str = "127.0.0.1"
     port: int = 8000

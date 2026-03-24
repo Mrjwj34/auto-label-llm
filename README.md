@@ -25,6 +25,18 @@ python -m backend.main
 
 健康检查：`GET http://127.0.0.1:8000/healthz`
 
+### 自动标注（M4）
+
+- 默认使用 `stub` 后端，配置项目 `labels` 后即可直接跑通 bbox 自动标注。
+- 如需接入 OpenAI-compatible / vLLM 服务，可在启动前设置环境变量：
+
+```powershell
+$env:ANNOTATION_BACKEND="openai_compatible"
+$env:VLLM_BASE_URL="http://127.0.0.1:8001"
+$env:VLLM_MODEL_NAME="qwen3-vl-2b"
+python -m backend.main
+```
+
 ### 前端（Vue + Vite）
 
 ```powershell
@@ -41,4 +53,3 @@ npm run dev
 
 - 本地数据默认写入 `data/`（不会提交到 git）
 - 里程碑采用“提交 + 自动验证 + 人工验收”节奏推进
-

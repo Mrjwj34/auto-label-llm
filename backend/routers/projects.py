@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import time
 from datetime import datetime
 from typing import Any, Literal
 
@@ -16,6 +15,8 @@ from backend.database import get_session_factory
 from backend.deps import get_db
 from backend.models.image import Image
 from backend.models.project import Project
+from backend.services.auto_annotator import generate_auto_annotations, replace_auto_annotations
+from backend.services.project_settings import get_project_labels
 from backend.tasks.task_manager import TaskContext, get_task_manager
 from backend.utils.storage import delete_project_dirs, ensure_project_dirs
 
@@ -143,6 +144,8 @@ def annotate_project(project_id: int, payload: ProjectAnnotateIn, db: Session = 
     project = db.get(Project, project_id)
     if project is None:
         raise AppError(404, "project not found")
+    if not get_project_labels(project):
+        raise AppError(400, "project labels are empty; configure at least one label before auto annotation")
 
     image_ids: list[int]
     if payload.image_ids:
@@ -167,29 +170,57 @@ def annotate_project(project_id: int, payload: ProjectAnnotateIn, db: Session = 
             ctx.set_progress(100, "no images to annotate")
             return
 
+        success_count = 0
+        failed_count = 0
         for idx, image_id in enumerate(image_ids, start=1):
             ctx.set_progress(int((idx - 1) / total * 100), f"image {idx}/{total}")
 
-            with session_factory() as task_db:
-                img = task_db.get(Image, image_id)
-                if img is None:
-                    continue
-                img.status = "annotating"
-                task_db.add(img)
-                task_db.commit()
+            try:
+                with session_factory() as task_db:
+                    img = task_db.get(Image, image_id)
+                    if img is None:
+                        continue
+                    task_project = task_db.get(Project, img.project_id)
+                    if task_project is None:
+                        raise RuntimeError("project not found")
 
-            # MVP stub: simulate long-running pipeline; M4 will replace with real LLM/SAM.
-            time.sleep(0.15)
+                    img.status = "annotating"
+                    task_db.add(img)
+                    task_db.commit()
 
-            with session_factory() as task_db:
-                img = task_db.get(Image, image_id)
-                if img is None:
-                    continue
-                img.status = "done"
-                task_db.add(img)
-                task_db.commit()
+                    result = generate_auto_annotations(task_project, img)
+                    replace_auto_annotations(task_db, img, result)
+                    img.status = "done"
+                    task_db.add(img)
+                    task_db.commit()
 
-            ctx.set_progress(int(idx / total * 100), f"image {idx}/{total} done")
+                    success_count += 1
+                    provider_text = f" via {result.provider}"
+                    if result.warning:
+                        provider_text += " (fallback)"
+            except Exception as exc:  # noqa: BLE001
+                failed_count += 1
+                provider_text = ""
+                with session_factory() as task_db:
+                    img = task_db.get(Image, image_id)
+                    if img is not None:
+                        img.status = "error"
+                        task_db.add(img)
+                        task_db.commit()
+                ctx.set_progress(int(idx / total * 100), f"image {idx}/{total} failed: {exc}")
+                continue
+
+            ctx.set_progress(
+                int(idx / total * 100),
+                f"image {idx}/{total} done ({len(result.annotations)} boxes{provider_text})",
+            )
+
+        summary = f"completed {success_count}/{total} images"
+        if failed_count:
+            summary += f", failed {failed_count}"
+        ctx.set_progress(100, summary)
+        if failed_count == total and total > 0:
+            raise RuntimeError(summary)
 
     task_id = manager.create(_job)
     return ok({"task_id": task_id, "total": len(image_ids)})

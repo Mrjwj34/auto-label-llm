@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import json
 import io
 import mimetypes
 from datetime import datetime
-import time
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, File, UploadFile
@@ -21,6 +19,8 @@ from backend.deps import get_db
 from backend.models.annotation import Annotation
 from backend.models.image import Image
 from backend.models.project import Project
+from backend.services.auto_annotator import generate_auto_annotations, replace_auto_annotations
+from backend.services.project_settings import get_project_labels
 from backend.tasks.task_manager import TaskContext, get_task_manager
 from backend.utils.storage import resolve_path, save_project_image_bytes
 
@@ -218,15 +218,7 @@ def create_annotation(image_id: int, payload: AnnotationCreateIn, db: Session = 
         raise AppError(404, "image not found")
 
     project = db.get(Project, image.project_id)
-    labels: list[str] = []
-    if project is not None and project.config:
-        try:
-            cfg = json.loads(project.config)
-            raw = cfg.get("labels")
-            if isinstance(raw, list) and all(isinstance(x, str) for x in raw):
-                labels = [x.strip() for x in raw if x and x.strip()]
-        except Exception:
-            labels = []
+    labels = get_project_labels(project)
 
     if labels and payload.label not in labels:
         raise AppError(400, "label must be one of project's labels")
@@ -249,6 +241,11 @@ def annotate_image(image_id: int, db: Session = Depends(get_db)):
     image = db.get(Image, image_id)
     if image is None:
         raise AppError(404, "image not found")
+    project = db.get(Project, image.project_id)
+    if project is None:
+        raise AppError(404, "project not found")
+    if not get_project_labels(project):
+        raise AppError(400, "project labels are empty; configure at least one label before auto annotation")
 
     manager = get_task_manager()
     session_factory = get_session_factory()
@@ -259,24 +256,27 @@ def annotate_image(image_id: int, db: Session = Depends(get_db)):
             img = task_db.get(Image, image_id)
             if img is None:
                 raise RuntimeError("image not found")
+            task_project = task_db.get(Project, img.project_id)
+            if task_project is None:
+                raise RuntimeError("project not found")
             img.status = "annotating"
             task_db.add(img)
             task_db.commit()
 
-        # MVP: just simulate a long-running pipeline (LLM/SAM will be added in M4/M5)
-        ctx.set_progress(25, "running")
-        time.sleep(0.2)
-        ctx.set_progress(60, "running")
-        time.sleep(0.2)
-        ctx.set_progress(90, "finalizing")
-        time.sleep(0.1)
-
         with session_factory() as task_db:
             img = task_db.get(Image, image_id)
             if img is not None:
+                task_project = task_db.get(Project, img.project_id)
+                if task_project is None:
+                    raise RuntimeError("project not found")
+                ctx.set_progress(40, "generating bbox")
+                result = generate_auto_annotations(task_project, img)
+                replace_auto_annotations(task_db, img, result)
                 img.status = "done"
                 task_db.add(img)
                 task_db.commit()
+                suffix = " (fallback)" if result.warning else ""
+                ctx.set_progress(95, f"generated {len(result.annotations)} boxes via {result.provider}{suffix}")
 
     task_id = manager.create(_job)
     return ok({"task_id": task_id})

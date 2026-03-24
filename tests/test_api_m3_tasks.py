@@ -16,6 +16,11 @@ def _make_png_bytes(width: int = 120, height: int = 90) -> bytes:
 def test_annotate_task_progress_and_completion(client):
     p = client.post("/api/projects", json={"name": "p1", "task_type": "detection"})
     project_id = p.json()["data"]["id"]
+    settings_resp = client.patch(
+        f"/api/projects/{project_id}/settings",
+        json={"labels": ["crack", "scratch"]},
+    )
+    assert settings_resp.status_code == 200
 
     up = client.post(
         f"/api/projects/{project_id}/images/upload",
