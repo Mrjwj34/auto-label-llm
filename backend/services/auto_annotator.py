@@ -16,8 +16,9 @@ from backend.config import get_settings
 from backend.models.annotation import Annotation
 from backend.models.image import Image
 from backend.models.project import Project
-from backend.utils.storage import resolve_path
 from backend.services.project_settings import get_project_labels, load_project_settings
+from backend.services.sam_service import SAMService
+from backend.utils.storage import resolve_path
 
 
 ANNOTATION_SCHEMA: dict[str, Any] = {
@@ -59,6 +60,8 @@ class GeneratedAnnotation:
     label: str
     bbox: list[float]
     confidence: float | None = None
+    polygon: list[list[float]] | None = None
+    mask_path: str | None = None
 
 
 @dataclass
@@ -299,6 +302,26 @@ def _openai_compatible_annotations(project: Project, image: Image, labels: list[
     raise RuntimeError(f"openai-compatible annotation failed: {last_error}")
 
 
+def _attach_segmentation_shapes(project: Project, image: Image, annotations: list[GeneratedAnnotation]) -> list[GeneratedAnnotation]:
+    if project.task_type != "segmentation":
+        return annotations
+
+    sam = SAMService()
+    enriched: list[GeneratedAnnotation] = []
+    for annotation in annotations:
+        prediction = sam.predict_polygon(image, annotation.bbox)
+        enriched.append(
+            GeneratedAnnotation(
+                label=annotation.label,
+                bbox=annotation.bbox,
+                confidence=annotation.confidence,
+                polygon=prediction.polygon,
+                mask_path=prediction.mask_path,
+            )
+        )
+    return enriched
+
+
 def generate_auto_annotations(project: Project, image: Image) -> AutoAnnotationResult:
     labels = get_project_labels(project)
     if not labels:
@@ -311,11 +334,13 @@ def generate_auto_annotations(project: Project, image: Image) -> AutoAnnotationR
     if backend_name == "openai_compatible":
         try:
             annotations = _openai_compatible_annotations(project, image, labels)
+            annotations = _attach_segmentation_shapes(project, image, annotations)
             return AutoAnnotationResult(provider="openai_compatible", annotations=annotations)
         except Exception as exc:
             warning = str(exc)
 
     annotations = _stub_annotations(image, labels)
+    annotations = _attach_segmentation_shapes(project, image, annotations)
     return AutoAnnotationResult(provider="stub", annotations=annotations, warning=warning)
 
 
@@ -339,6 +364,8 @@ def replace_auto_annotations(db: Session, image: Image, result: AutoAnnotationRe
             image_id=image.id,
             label=generated.label,
             bbox=generated.bbox,
+            polygon=generated.polygon,
+            mask_path=generated.mask_path,
             confidence=generated.confidence,
             quality_score=generated.confidence,
             source="auto",

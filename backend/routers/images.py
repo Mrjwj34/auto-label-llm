@@ -21,6 +21,7 @@ from backend.models.image import Image
 from backend.models.project import Project
 from backend.services.auto_annotator import generate_auto_annotations, replace_auto_annotations
 from backend.services.project_settings import get_project_labels
+from backend.services.sam_service import SAMService
 from backend.tasks.task_manager import TaskContext, get_task_manager
 from backend.utils.storage import resolve_path, save_project_image_bytes
 
@@ -223,10 +224,19 @@ def create_annotation(image_id: int, payload: AnnotationCreateIn, db: Session = 
     if labels and payload.label not in labels:
         raise AppError(400, "label must be one of project's labels")
 
+    polygon: list[list[float]] | None = None
+    mask_path: str | None = None
+    if project is not None and project.task_type == "segmentation":
+        prediction = SAMService().predict_polygon(image, payload.bbox)
+        polygon = prediction.polygon
+        mask_path = prediction.mask_path
+
     ann = Annotation(
         image_id=image_id,
         label=payload.label,
         bbox=payload.bbox,
+        polygon=polygon,
+        mask_path=mask_path,
         confidence=payload.confidence,
         source=payload.source,
     )

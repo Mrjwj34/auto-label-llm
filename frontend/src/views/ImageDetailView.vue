@@ -20,6 +20,8 @@ type AnnotationRow = {
   image_id: number
   label: string
   bbox: [number, number, number, number] | null
+  polygon: [number, number][] | null
+  mask_path: string | null
   confidence: number | null
   source: string
   is_confirmed: boolean
@@ -94,6 +96,12 @@ function rectPx(bbox: [number, number, number, number]) {
     width: (xmax - xmin) * w,
     height: (ymax - ymin) * h,
   }
+}
+
+function polygonPoints(polygon: [number, number][]) {
+  const w = image.value?.width ?? 1
+  const h = image.value?.height ?? 1
+  return polygon.map(([x, y]) => `${x * w},${y * h}`).join(' ')
 }
 
 function clamp01(n: number): number {
@@ -422,6 +430,12 @@ watch(
         <img class="img" :src="fileSrc()" :alt="image.filename" draggable="false" @dragstart.prevent />
         <svg class="overlay" :viewBox="viewBox()" preserveAspectRatio="xMinYMin meet">
           <g v-for="a in annotations" :key="a.id">
+            <polygon
+              v-if="a.polygon && a.polygon.length >= 3"
+              :points="polygonPoints(a.polygon)"
+              class="polygon"
+              vector-effect="non-scaling-stroke"
+            />
             <template v-if="a.bbox">
               <rect
                 :x="rectPx(a.bbox).x"
@@ -465,6 +479,7 @@ watch(
             <th>ID</th>
             <th>Label</th>
             <th>Bbox(0..1)</th>
+            <th>Polygon</th>
             <th>Source</th>
             <th>Confirmed</th>
             <th>Actions</th>
@@ -475,6 +490,7 @@ watch(
             <td class="mono">{{ a.id }}</td>
             <td class="mono">{{ a.label }}</td>
             <td class="mono">{{ a.bbox }}</td>
+            <td class="mono">{{ a.polygon ? `${a.polygon.length} pts` : '-' }}</td>
             <td class="mono">{{ a.source }}</td>
             <td class="mono">{{ a.is_confirmed }}</td>
             <td>
@@ -576,6 +592,12 @@ watch(
   fill: rgba(0, 255, 0, 0.08);
   stroke: rgba(0, 255, 0, 0.9);
   stroke-width: 1;
+}
+
+.polygon {
+  fill: rgba(255, 87, 34, 0.18);
+  stroke: rgba(255, 132, 84, 0.92);
+  stroke-width: 1.5;
 }
 
 .draft {
