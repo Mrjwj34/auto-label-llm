@@ -27,6 +27,14 @@ type AnnotationRow = {
   is_confirmed: boolean
 }
 
+type InteractionMode = 'bbox' | 'points'
+
+type CorrectionPoint = {
+  x: number
+  y: number
+  label: 0 | 1
+}
+
 const route = useRoute()
 const router = useRouter()
 
@@ -41,6 +49,9 @@ const annotations = ref<AnnotationRow[]>([])
 
 const projectLabels = ref<string[]>([])
 const selectedLabel = ref<string>('')
+const interactionMode = ref<InteractionMode>('bbox')
+const activeAnnotationId = ref<number | null>(null)
+const correctionPoints = ref<CorrectionPoint[]>([])
 
 type DrawMode = 'idle' | 'dragging' | 'armed'
 
@@ -67,7 +78,15 @@ function updateStageSize() {
 
 let resizeObserver: ResizeObserver | null = null
 
-const canDraw = computed(() => !!image.value && !!stageRef.value && !!selectedLabel.value)
+const activeAnnotation = computed(
+  () => annotations.value.find((annotation) => annotation.id === activeAnnotationId.value) ?? null
+)
+const canDraw = computed(
+  () => interactionMode.value === 'bbox' && !!image.value && !!stageRef.value && !!selectedLabel.value
+)
+const canPointCorrect = computed(
+  () => interactionMode.value === 'points' && !!image.value && !!stageRef.value && !!activeAnnotation.value
+)
 
 function back() {
   router.push({ name: 'project-images', params: { projectId: projectId.value } })
@@ -102,6 +121,15 @@ function polygonPoints(polygon: [number, number][]) {
   const w = image.value?.width ?? 1
   const h = image.value?.height ?? 1
   return polygon.map(([x, y]) => `${x * w},${y * h}`).join(' ')
+}
+
+function pointPx(point: CorrectionPoint) {
+  const w = image.value?.width ?? 1
+  const h = image.value?.height ?? 1
+  return {
+    cx: point.x * w,
+    cy: point.y * h,
+  }
 }
 
 function clamp01(n: number): number {
@@ -139,6 +167,7 @@ const labelFontSize = computed(() => {
 
 const labelOffsetX = computed(() => userUnitsFromScreenPx(6))
 const labelOffsetY = computed(() => userUnitsFromScreenPx(16))
+const pointRadius = computed(() => Math.max(4, Math.min(18, userUnitsFromScreenPx(6))))
 
 const draftBbox = computed<[number, number, number, number] | null>(() => {
   if (drawing.mode === 'idle') return null
@@ -158,7 +187,13 @@ async function fetchImageAndAnnotations() {
     image.value = imgResp.data?.data ?? null
 
     const annResp = await api.get(`/api/images/${imageId.value}/annotations`)
-    annotations.value = annResp.data?.data ?? []
+    const rows = annResp.data?.data ?? []
+    annotations.value = rows
+    if (activeAnnotationId.value != null && !rows.some((annotation: AnnotationRow) => annotation.id === activeAnnotationId.value)) {
+      activeAnnotationId.value = null
+      correctionPoints.value = []
+      interactionMode.value = 'bbox'
+    }
   } catch (err: any) {
     error.value = err?.message ? String(err.message) : String(err)
   } finally {
@@ -192,14 +227,88 @@ async function finalizeBbox(bbox: [number, number, number, number]) {
   const minSide = 0.002
   if (w < minSide || h < minSide) return
 
-  await api.post(`/api/images/${imageId.value}/annotations`, {
+  await api.post(`/api/images/${imageId.value}/predict`, {
+    annotation_id: null,
     label: selectedLabel.value,
     bbox,
-    source: 'manual',
   })
 }
 
+function setBoxMode() {
+  interactionMode.value = 'bbox'
+  activeAnnotationId.value = null
+  correctionPoints.value = []
+  drawing.mode = 'idle'
+  drawing.moved = false
+  drawing.pointerId = null
+}
+
+function togglePointEditing(annotationId: number) {
+  if (interactionMode.value === 'points' && activeAnnotationId.value === annotationId) {
+    setBoxMode()
+    return
+  }
+  interactionMode.value = 'points'
+  activeAnnotationId.value = annotationId
+  correctionPoints.value = []
+  error.value = ''
+}
+
+function clearCorrectionPoints() {
+  correctionPoints.value = []
+}
+
+async function confirmAnnotation(annotationId: number) {
+  error.value = ''
+  try {
+    await api.patch(`/api/annotations/${annotationId}/confirm`)
+    await fetchImageAndAnnotations()
+  } catch (err: any) {
+    error.value = err?.response?.data?.message
+      ? String(err.response.data.message)
+      : err?.message
+        ? String(err.message)
+        : String(err)
+  }
+}
+
+async function submitPointCorrection(ev: PointerEvent) {
+  if (!activeAnnotation.value) {
+    error.value = 'Select an annotation first before using point correction.'
+    return
+  }
+
+  const pointLabel: 0 | 1 = ev.button === 2 ? 0 : 1
+  const point = { ...pointToNorm(ev), label: pointLabel }
+  correctionPoints.value = [...correctionPoints.value, point]
+  error.value = ''
+
+  try {
+    await api.post(`/api/images/${imageId.value}/predict`, {
+      annotation_id: activeAnnotation.value.id,
+      points: [point],
+    })
+    await fetchImageAndAnnotations()
+  } catch (err: any) {
+    correctionPoints.value = correctionPoints.value.slice(0, -1)
+    error.value = err?.response?.data?.message
+      ? String(err.response.data.message)
+      : err?.message
+        ? String(err.message)
+        : String(err)
+  }
+}
+
 function onPointerDown(ev: PointerEvent) {
+  if (interactionMode.value === 'points') {
+    if (!canPointCorrect.value) return
+    if (ev.button !== 0 && ev.button !== 2) return
+    ev.preventDefault()
+    ev.stopPropagation()
+    void submitPointCorrection(ev)
+    return
+  }
+
   if (!canDraw.value) return
   if (ev.button !== 0) return
   ev.preventDefault()
@@ -315,17 +424,29 @@ function onPointerCancel(ev: PointerEvent) {
 
 function onKeyDown(ev: KeyboardEvent) {
   if (ev.key !== 'Escape') return
-  if (drawing.mode === 'idle') return
-  drawing.mode = 'idle'
-  drawing.moved = false
-  drawing.pointerId = null
+  if (drawing.mode !== 'idle') {
+    drawing.mode = 'idle'
+    drawing.moved = false
+    drawing.pointerId = null
+    return
+  }
+  if (correctionPoints.value.length > 0) {
+    correctionPoints.value = []
+    return
+  }
+  if (interactionMode.value === 'points') {
+    setBoxMode()
+  }
 }
 
 async function deleteAnnotation(annotationId: number) {
-  if (!confirm(`删除标注 #${annotationId}？`)) return
+  if (!confirm(`Delete annotation #${annotationId}?`)) return
   error.value = ''
   try {
     await api.delete(`/api/annotations/${annotationId}`)
+    if (activeAnnotationId.value === annotationId) {
+      setBoxMode()
+    }
     await fetchImageAndAnnotations()
   } catch (err: any) {
     error.value = err?.response?.data?.message
@@ -404,12 +525,39 @@ watch(
     <div class="controls card">
       <div class="row">
         <label class="label">label</label>
-        <select v-model="selectedLabel" class="input" :disabled="projectLabels.length === 0">
+        <select v-model="selectedLabel" class="input" data-testid="detail-label-select" :disabled="projectLabels.length === 0">
           <option v-for="l in projectLabels" :key="l" :value="l">{{ l }}</option>
         </select>
         <div v-if="projectLabels.length === 0" class="inline-warn">
           请先在项目“图片列表”页配置 labels
         </div>
+      </div>
+      <div class="row">
+        <label class="label">mode</label>
+        <div class="mode-actions">
+          <button
+            class="btn small"
+            data-testid="box-mode-btn"
+            type="button"
+            :class="{ primary: interactionMode === 'bbox' }"
+            @click="setBoxMode"
+          >
+            Box Mode
+          </button>
+          <button
+            class="btn small"
+            data-testid="clear-points-btn"
+            type="button"
+            :disabled="correctionPoints.length === 0"
+            @click="clearCorrectionPoints"
+          >
+            Clear Points
+          </button>
+        </div>
+      </div>
+      <div v-if="interactionMode === 'points'" class="hint">
+        Point mode: left click adds a positive point, right click adds a negative point. Active annotation:
+        {{ activeAnnotationId ?? '-' }}
       </div>
       <div class="hint">
         本系统不接收用户自然语言提示词；自动标注使用固定系统提示词 + labels 列表做 grounding。批量自动标注请在“图片列表”页触发。
@@ -422,10 +570,12 @@ watch(
         v-else
         ref="stageRef"
         class="stage-inner"
+        data-testid="annotation-stage"
         @pointerdown="onPointerDown"
         @pointermove="onPointerMove"
         @pointerup="onPointerUp"
         @pointercancel="onPointerCancel"
+        @contextmenu.prevent
       >
         <img class="img" :src="fileSrc()" :alt="image.filename" draggable="false" @dragstart.prevent />
         <svg class="overlay" :viewBox="viewBox()" preserveAspectRatio="xMinYMin meet">
@@ -434,6 +584,7 @@ watch(
               v-if="a.polygon && a.polygon.length >= 3"
               :points="polygonPoints(a.polygon)"
               class="polygon"
+              :class="{ 'polygon-active': activeAnnotationId === a.id }"
               vector-effect="non-scaling-stroke"
             />
             <template v-if="a.bbox">
@@ -443,6 +594,7 @@ watch(
                 :width="rectPx(a.bbox).width"
                 :height="rectPx(a.bbox).height"
                 class="bbox"
+                :class="{ 'bbox-active': activeAnnotationId === a.id }"
                 vector-effect="non-scaling-stroke"
               />
               <text
@@ -454,6 +606,14 @@ watch(
                 {{ a.label }}
               </text>
             </template>
+          </g>
+          <g v-for="(point, idx) in correctionPoints" :key="`point-${idx}`">
+            <circle
+              :cx="pointPx(point).cx"
+              :cy="pointPx(point).cy"
+              :r="pointRadius"
+              :class="point.label === 1 ? 'point-positive' : 'point-negative'"
+            />
           </g>
 
           <template v-if="draftBbox && image?.width && image?.height">
@@ -493,8 +653,27 @@ watch(
             <td class="mono">{{ a.polygon ? `${a.polygon.length} pts` : '-' }}</td>
             <td class="mono">{{ a.source }}</td>
             <td class="mono">{{ a.is_confirmed }}</td>
-            <td>
-              <button class="btn danger small" type="button" @click="deleteAnnotation(a.id)">删除</button>
+            <td class="row-actions" :class="{ 'row-active': activeAnnotationId === a.id }">
+              <button
+                v-if="a.polygon"
+                class="btn small"
+                :class="{ primary: interactionMode === 'points' && activeAnnotationId === a.id }"
+                :data-testid="`point-edit-${a.id}`"
+                type="button"
+                @click="togglePointEditing(a.id)"
+              >
+                {{ interactionMode === 'points' && activeAnnotationId === a.id ? 'Stop Points' : 'Point Edit' }}
+              </button>
+              <button
+                class="btn small"
+                :data-testid="`confirm-${a.id}`"
+                type="button"
+                :disabled="a.is_confirmed"
+                @click="confirmAnnotation(a.id)"
+              >
+                {{ a.is_confirmed ? 'Confirmed' : 'Confirm' }}
+              </button>
+              <button class="btn danger small" :data-testid="`delete-${a.id}`" type="button" @click="deleteAnnotation(a.id)">Delete</button>
             </td>
           </tr>
         </tbody>
@@ -539,6 +718,11 @@ watch(
   display: flex;
   gap: 12px;
   align-items: center;
+}
+
+.mode-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .label {
@@ -594,9 +778,32 @@ watch(
   stroke-width: 1;
 }
 
+.bbox-active {
+  stroke: rgba(255, 214, 10, 0.98);
+  stroke-width: 2;
+}
+
 .polygon {
   fill: rgba(255, 87, 34, 0.18);
   stroke: rgba(255, 132, 84, 0.92);
+  stroke-width: 1.5;
+}
+
+.polygon-active {
+  fill: rgba(255, 214, 10, 0.18);
+  stroke: rgba(255, 214, 10, 0.98);
+  stroke-width: 2;
+}
+
+.point-positive {
+  fill: rgba(0, 200, 120, 0.92);
+  stroke: rgba(255, 255, 255, 0.95);
+  stroke-width: 1.5;
+}
+
+.point-negative {
+  fill: rgba(248, 81, 73, 0.95);
+  stroke: rgba(255, 255, 255, 0.95);
   stroke-width: 1.5;
 }
 
@@ -626,6 +833,16 @@ watch(
   padding: 8px 10px;
   text-align: left;
   font-size: 13px;
+}
+
+.row-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.row-active {
+  background: rgba(255, 214, 10, 0.06);
 }
 
 .mono {

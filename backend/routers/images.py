@@ -29,6 +29,22 @@ from backend.utils.storage import resolve_path, save_project_image_bytes
 router = APIRouter(prefix="/api", tags=["images"])
 
 
+def _normalize_bbox_input(value: list[float]) -> list[float]:
+    if len(value) != 4:
+        raise ValueError("bbox must have 4 numbers")
+    xmin, ymin, xmax, ymax = [float(x) for x in value]
+    if xmin > xmax:
+        xmin, xmax = xmax, xmin
+    if ymin > ymax:
+        ymin, ymax = ymax, ymin
+    for n in (xmin, ymin, xmax, ymax):
+        if n < 0.0 or n > 1.0:
+            raise ValueError("bbox values must be within 0..1")
+    if xmin == xmax or ymin == ymax:
+        raise ValueError("bbox must have non-zero area")
+    return [xmin, ymin, xmax, ymax]
+
+
 class ImagePatchIn(BaseModel):
     split: Literal["train", "val", "test"] | None = None
 
@@ -50,19 +66,54 @@ class AnnotationCreateIn(BaseModel):
     @field_validator("bbox")
     @classmethod
     def validate_bbox(cls, v: list[float]) -> list[float]:
-        if len(v) != 4:
-            raise ValueError("bbox must have 4 numbers")
-        xmin, ymin, xmax, ymax = [float(x) for x in v]
-        if xmin > xmax:
-            xmin, xmax = xmax, xmin
-        if ymin > ymax:
-            ymin, ymax = ymax, ymin
-        for n in (xmin, ymin, xmax, ymax):
-            if n < 0.0 or n > 1.0:
-                raise ValueError("bbox values must be within 0..1")
-        if xmin == xmax or ymin == ymax:
-            raise ValueError("bbox must have non-zero area")
-        return [xmin, ymin, xmax, ymax]
+        return _normalize_bbox_input(v)
+
+
+class PredictPointIn(BaseModel):
+    x: float
+    y: float
+    label: Literal[0, 1]
+
+    @field_validator("x", "y")
+    @classmethod
+    def validate_coordinate(cls, value: float) -> float:
+        num = float(value)
+        if num < 0.0 or num > 1.0:
+            raise ValueError("point values must be within 0..1")
+        return num
+
+
+class ImagePredictIn(BaseModel):
+    annotation_id: int | None = None
+    label: str | None = Field(default=None, max_length=200)
+    bbox: list[float] | None = None
+    points: list[PredictPointIn] | None = None
+
+    @field_validator("label")
+    @classmethod
+    def validate_optional_label(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("label must be non-empty")
+        return stripped
+
+    @field_validator("bbox")
+    @classmethod
+    def validate_optional_bbox(cls, value: list[float] | None) -> list[float] | None:
+        if value is None:
+            return None
+        return _normalize_bbox_input(value)
+
+    @field_validator("points")
+    @classmethod
+    def validate_points(cls, value: list[PredictPointIn] | None) -> list[PredictPointIn] | None:
+        if value is None:
+            return None
+        if len(value) == 0:
+            raise ValueError("points must not be empty")
+        return value
 
 
 def _image_to_dict(img: Image) -> dict[str, Any]:
@@ -202,6 +253,14 @@ def _annotation_to_dict(a: Annotation) -> dict[str, Any]:
     }
 
 
+def _validate_project_label(project: Project | None, label: str | None) -> None:
+    if label is None:
+        return
+    labels = get_project_labels(project)
+    if labels and label not in labels:
+        raise AppError(400, "label must be one of project's labels")
+
+
 @router.get("/images/{image_id}/annotations")
 def list_annotations(image_id: int, db: Session = Depends(get_db)):
     image = db.get(Image, image_id)
@@ -219,10 +278,7 @@ def create_annotation(image_id: int, payload: AnnotationCreateIn, db: Session = 
         raise AppError(404, "image not found")
 
     project = db.get(Project, image.project_id)
-    labels = get_project_labels(project)
-
-    if labels and payload.label not in labels:
-        raise AppError(400, "label must be one of project's labels")
+    _validate_project_label(project, payload.label)
 
     polygon: list[list[float]] | None = None
     mask_path: str | None = None
@@ -244,6 +300,107 @@ def create_annotation(image_id: int, payload: AnnotationCreateIn, db: Session = 
     db.commit()
     db.refresh(ann)
     return ok({"id": ann.id})
+
+
+@router.post("/images/{image_id}/predict")
+def predict_annotation(image_id: int, payload: ImagePredictIn, db: Session = Depends(get_db)):
+    image = db.get(Image, image_id)
+    if image is None:
+        raise AppError(404, "image not found")
+
+    project = db.get(Project, image.project_id)
+    if project is None:
+        raise AppError(404, "project not found")
+
+    has_bbox = payload.bbox is not None
+    has_points = payload.points is not None
+    if has_bbox == has_points:
+        raise AppError(400, "exactly one of bbox or points is required")
+
+    annotation: Annotation | None = None
+    if payload.annotation_id is not None:
+        annotation = db.get(Annotation, payload.annotation_id)
+        if annotation is None or annotation.image_id != image_id:
+            raise AppError(404, "annotation not found")
+
+    if has_bbox:
+        if annotation is None:
+            if payload.label is None:
+                raise AppError(400, "label is required when creating a new annotation")
+            _validate_project_label(project, payload.label)
+            created = Annotation(
+                image_id=image_id,
+                label=payload.label,
+                bbox=payload.bbox,
+                source="corrected",
+                is_confirmed=False,
+            )
+            if project.task_type == "segmentation" and payload.bbox is not None:
+                prediction = SAMService().predict_polygon(image, payload.bbox)
+                created.bbox = prediction.bbox
+                created.polygon = prediction.polygon
+                created.mask_path = prediction.mask_path
+            db.add(created)
+            db.commit()
+            db.refresh(created)
+            return ok(
+                {
+                    "annotation_id": created.id,
+                    "bbox": created.bbox,
+                    "polygon": created.polygon,
+                    "mask_path": created.mask_path,
+                }
+            )
+
+        if payload.label is not None:
+            _validate_project_label(project, payload.label)
+            annotation.label = payload.label
+        annotation.bbox = payload.bbox
+        annotation.source = "corrected"
+        annotation.is_confirmed = False
+        if project.task_type == "segmentation" and payload.bbox is not None:
+            prediction = SAMService().predict_polygon(image, payload.bbox)
+            annotation.bbox = prediction.bbox
+            annotation.polygon = prediction.polygon
+            annotation.mask_path = prediction.mask_path
+        db.add(annotation)
+        db.commit()
+        db.refresh(annotation)
+        return ok(
+            {
+                "annotation_id": annotation.id,
+                "bbox": annotation.bbox,
+                "polygon": annotation.polygon,
+                "mask_path": annotation.mask_path,
+            }
+        )
+
+    if annotation is None:
+        raise AppError(400, "annotation_id is required for point correction")
+    if project.task_type != "segmentation":
+        raise AppError(400, "point correction is only available for segmentation projects")
+
+    prediction = SAMService().refine_annotation(
+        image=image,
+        annotation=annotation,
+        points=[{"x": point.x, "y": point.y, "label": point.label} for point in payload.points or []],
+    )
+    annotation.bbox = prediction.bbox
+    annotation.polygon = prediction.polygon
+    annotation.mask_path = prediction.mask_path
+    annotation.source = "corrected"
+    annotation.is_confirmed = False
+    db.add(annotation)
+    db.commit()
+    db.refresh(annotation)
+    return ok(
+        {
+            "annotation_id": annotation.id,
+            "bbox": annotation.bbox,
+            "polygon": annotation.polygon,
+            "mask_path": annotation.mask_path,
+        }
+    )
 
 
 @router.post("/images/{image_id}/annotate")

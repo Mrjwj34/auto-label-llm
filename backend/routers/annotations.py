@@ -20,3 +20,13 @@ def delete_annotation(annotation_id: int, db: Session = Depends(get_db)):
     db.commit()
     return ok(None)
 
+
+@router.patch("/annotations/{annotation_id}/confirm")
+def confirm_annotation(annotation_id: int, db: Session = Depends(get_db)):
+    ann = db.get(Annotation, annotation_id)
+    if ann is None:
+        raise AppError(404, "annotation not found")
+    ann.is_confirmed = True
+    db.add(ann)
+    db.commit()
+    return ok(None)

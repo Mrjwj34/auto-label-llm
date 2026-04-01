@@ -80,17 +80,25 @@ onMounted(() => {
     <div class="card">
       <div class="row">
         <label class="label">名称</label>
-        <input v-model="newName" class="input" placeholder="project name" />
+        <input v-model="newName" class="input" data-testid="project-name-input" placeholder="project name" />
       </div>
       <div class="row">
         <label class="label">任务类型</label>
-        <select v-model="newTaskType" class="input">
+        <select v-model="newTaskType" class="input" data-testid="project-task-type">
           <option value="detection">detection (bbox)</option>
           <option value="segmentation">segmentation (mask/polygon)</option>
         </select>
       </div>
       <div class="actions">
-        <button class="btn primary" type="button" :disabled="!canCreate" @click="createProject">创建项目</button>
+        <button
+          class="btn primary"
+          type="button"
+          data-testid="project-create-btn"
+          :disabled="!canCreate"
+          @click="createProject"
+        >
+          创建项目
+        </button>
       </div>
       <div v-if="error" class="error">{{ error }}</div>
     </div>
@@ -108,7 +116,7 @@ onMounted(() => {
           </div>
           <div class="meta muted">{{ p.created_at }}</div>
           <div class="item-actions">
-            <button class="btn" type="button" @click="openProject(p.id)">打开</button>
+            <button class="btn" type="button" :data-testid="`project-open-${p.id}`" @click="openProject(p.id)">打开</button>
             <button class="btn danger" type="button" @click="deleteProject(p.id)">删除</button>
           </div>
         </article>
@@ -252,4 +260,3 @@ onMounted(() => {
   font-size: 13px;
 }
 </style>
-

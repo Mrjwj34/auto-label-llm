@@ -226,7 +226,7 @@ watch(projectId, () => {
 
     <div class="card">
       <div class="row">
-        <input class="input" type="file" multiple accept="image/*" @change="onPickFiles" />
+        <input class="input" data-testid="image-upload-input" type="file" multiple accept="image/*" @change="onPickFiles" />
         <button class="btn primary" type="button" :disabled="!canUpload" @click="upload">
           {{ uploading ? '上传中…' : '上传' }}
         </button>
@@ -240,10 +240,11 @@ watch(projectId, () => {
         <label class="label">Labels</label>
         <input
           v-model="labelsText"
+          data-testid="labels-input"
           class="input"
           placeholder="用逗号分隔，例如：crack, scratch, screw_hole"
         />
-        <button class="btn" type="button" :disabled="labelsSaving" @click="saveLabels">
+        <button class="btn" data-testid="labels-save-btn" type="button" :disabled="labelsSaving" @click="saveLabels">
           {{ labelsSaving ? '保存中…' : '保存' }}
         </button>
       </div>
@@ -251,7 +252,13 @@ watch(projectId, () => {
         本系统不接收用户自然语言提示词；只使用项目 Labels 列表 + 固定系统提示词做 grounding，以降低提示词攻击风险。
       </div>
       <div class="row">
-        <button class="btn primary" type="button" :disabled="!canStartAnnotate" @click="startBatchAnnotate">
+        <button
+          class="btn primary"
+          data-testid="batch-annotate-btn"
+          type="button"
+          :disabled="!canStartAnnotate"
+          @click="startBatchAnnotate"
+        >
           Batch Auto Annotate (M4)
         </button>
         <div v-if="taskState.taskId" class="task-meta">
@@ -271,7 +278,7 @@ watch(projectId, () => {
       <div v-if="loading" class="hint">加载中…</div>
       <div v-else-if="images.length === 0" class="hint">暂无图片，先上传。</div>
       <div v-else class="grid">
-        <article v-for="img in images" :key="img.id" class="item" @click="openImage(img.id)">
+        <article v-for="img in images" :key="img.id" class="item" :data-testid="`image-card-${img.id}`" @click="openImage(img.id)">
           <div class="thumb">
             <img :src="imageSrc(img)" :alt="img.filename" loading="lazy" />
           </div>
