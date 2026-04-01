@@ -44,7 +44,7 @@
 | M3 | 异步任务骨架与进度 | 项目级批量标注，任务进度可见 | ✅ | 91f571e |
 | M4 | 自动标注（LLM Stub → 真实接入） | 自动生成 bbox，并写入 DB | ✅ | 53d2d7b |
 | M5 | 分割能力（SAM Stub → 真实接入） | 生成 mask/polygon 并渲染 | ✅ | 71e5864 |
-| M6 | 人工纠错（增删改确认） | 点选/补框/删除/确认生效 | ⬜ | - |
+| M6 | 人工纠错（增删改确认） | 点选/补框/删除/确认生效 | 🟡 | 2bc7e03 |
 | M7 | 数据集导入/导出 | 导出 YOLO/COCO（最小可用） | ⬜ | - |
 | M8 | 微调流水线（可选） | 用确认数据导出 → 启动训练任务 | ⬜ | - |
 | M9 | 评估与质量评分（MVP） | val/test 指标 + 线上风险排序 | ⬜ | - |
@@ -236,3 +236,4 @@
 | 2026-03-24 | M4 | 🟡 → ✅ | 53d2d7b | `.venv\Scripts\python.exe -m compileall backend`、`.venv\Scripts\python.exe -m pytest -q`、`npm run build` | ✅ 通过 | 自动标注验收通过 |
 | 2026-03-24 | M5 | ⬜ → 🟡 | 71e5864 | `.venv\Scripts\python.exe -m compileall backend`、`.venv\Scripts\python.exe -m pytest -q`、`npm run build` | ⏳ 待验收 | 分割项目自动生成 polygon + 前端半透明渲染 + SAM stub 服务骨架 |
 | 2026-03-24 | M5 | 🟡 → ✅ | 71e5864 | `.venv\Scripts\python.exe -m compileall backend`、`.venv\Scripts\python.exe -m pytest -q`、`npm run build` | ✅ 通过 | 分割能力验收通过 |
+| 2026-04-01 | M6 | ⬜ → 🟡 | 2bc7e03 | `.venv\Scripts\python.exe -m compileall backend`、`.venv\Scripts\python.exe -m pytest -q`、`npm run build`、`node output\playwright\m6\node\e2e-m6.cjs` | ⏳ 待验收 | 确认标注 + 点选纠错 + 补框 + 删除闭环，浏览器真机流已跑通 |
