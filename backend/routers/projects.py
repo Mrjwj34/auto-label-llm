@@ -4,7 +4,8 @@ import json
 from datetime import datetime
 from typing import Any, Literal
 
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, File, Form, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,6 +17,7 @@ from backend.deps import get_db
 from backend.models.image import Image
 from backend.models.project import Project
 from backend.services.auto_annotator import generate_auto_annotations, replace_auto_annotations
+from backend.services.dataset_io import export_project_dataset, import_project_dataset
 from backend.services.project_settings import get_project_labels
 from backend.tasks.task_manager import TaskContext, get_task_manager
 from backend.utils.storage import delete_project_dirs, ensure_project_dirs
@@ -224,3 +226,49 @@ def annotate_project(project_id: int, payload: ProjectAnnotateIn, db: Session = 
 
     task_id = manager.create(_job)
     return ok({"task_id": task_id, "total": len(image_ids)})
+
+
+@router.get("/projects/{project_id}/export")
+def export_dataset(
+    project_id: int,
+    format: Literal["yolo", "coco"],
+    db: Session = Depends(get_db),
+):
+    project = db.get(Project, project_id)
+    if project is None:
+        raise AppError(404, "project not found")
+
+    archive_path = export_project_dataset(project, db, format)
+    return FileResponse(
+        archive_path,
+        media_type="application/zip",
+        filename=archive_path.name,
+    )
+
+
+@router.post("/projects/{project_id}/import")
+async def import_dataset(
+    project_id: int,
+    format: Literal["yolo", "coco"] = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    project = db.get(Project, project_id)
+    if project is None:
+        raise AppError(404, "project not found")
+
+    content = await file.read()
+    result = import_project_dataset(
+        project,
+        db,
+        format_name=format,
+        archive_name=file.filename or f"{format}.zip",
+        archive_bytes=content,
+    )
+    return ok(
+        {
+            "imported_count": result.imported_count,
+            "annotation_count": result.annotation_count,
+            "labels": result.labels,
+        }
+    )

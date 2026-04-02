@@ -14,6 +14,8 @@ type ImageRow = {
   file_url: string
 }
 
+type DatasetFormat = 'yolo' | 'coco'
+
 const route = useRoute()
 const router = useRouter()
 
@@ -32,6 +34,13 @@ const labelsText = ref('')
 const labelsSaving = ref(false)
 const projectLabels = computed(() => parseLabels(labelsText.value))
 const canStartAnnotate = computed(() => !loading.value && projectLabels.value.length > 0)
+const importFormat = ref<DatasetFormat>('yolo')
+const importFile = ref<File | null>(null)
+const importInputRef = ref<HTMLInputElement | null>(null)
+const importingDataset = ref(false)
+const exportingDataset = ref<DatasetFormat | ''>('')
+const datasetMessage = ref('')
+const canImportDataset = computed(() => !!importFile.value && !importingDataset.value)
 
 const taskState = reactive({
   taskId: '' as string,
@@ -102,6 +111,75 @@ async function upload() {
     error.value = err?.message ? String(err.message) : String(err)
   } finally {
     uploading.value = false
+  }
+}
+
+function onPickImportFile(ev: Event) {
+  const input = ev.target as HTMLInputElement
+  importFile.value = input.files?.[0] ?? null
+}
+
+async function exportDataset(format: DatasetFormat) {
+  exportingDataset.value = format
+  error.value = ''
+  datasetMessage.value = ''
+  try {
+    const resp = await api.get(`/api/projects/${projectId.value}/export`, {
+      params: { format },
+      responseType: 'blob',
+    })
+    const blob = new Blob([resp.data], { type: resp.headers['content-type'] ?? 'application/zip' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    const disposition = String(resp.headers['content-disposition'] ?? '')
+    const match = disposition.match(/filename="?([^"]+)"?/)
+    link.href = url
+    link.download = match?.[1] ?? `project-${projectId.value}-${format}.zip`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    datasetMessage.value = `Downloaded ${format.toUpperCase()} archive (${blob.size} bytes).`
+  } catch (err: any) {
+    error.value = err?.response?.data?.message
+      ? String(err.response.data.message)
+      : err?.message
+        ? String(err.message)
+        : String(err)
+  } finally {
+    exportingDataset.value = ''
+  }
+}
+
+async function importDataset() {
+  if (!importFile.value) {
+    error.value = 'Please choose a dataset zip first.'
+    return
+  }
+  importingDataset.value = true
+  error.value = ''
+  datasetMessage.value = ''
+  try {
+    const form = new FormData()
+    form.append('format', importFormat.value)
+    form.append('file', importFile.value)
+    const resp = await api.post(`/api/projects/${projectId.value}/import`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    const data = resp.data?.data ?? {}
+    datasetMessage.value = `Imported ${Number(data.imported_count ?? 0)} images / ${Number(data.annotation_count ?? 0)} annotations via ${importFormat.value.toUpperCase()}.`
+    importFile.value = null
+    if (importInputRef.value) importInputRef.value.value = ''
+    await fetchProjectSettings()
+    await fetchImages()
+  } catch (err: any) {
+    error.value = err?.response?.data?.message
+      ? String(err.response.data.message)
+      : err?.message
+        ? String(err.message)
+        : String(err)
+  } finally {
+    importingDataset.value = false
   }
 }
 
@@ -274,6 +352,61 @@ watch(projectId, () => {
       </div>
     </div>
 
+    <div class="card">
+      <div class="row wrap-row">
+        <label class="label">Dataset</label>
+        <div class="dataset-actions">
+          <button
+            class="btn"
+            data-testid="export-yolo-btn"
+            type="button"
+            :disabled="exportingDataset !== ''"
+            @click="exportDataset('yolo')"
+          >
+            {{ exportingDataset === 'yolo' ? 'Exporting…' : 'Export YOLO Zip' }}
+          </button>
+          <button
+            class="btn"
+            data-testid="export-coco-btn"
+            type="button"
+            :disabled="exportingDataset !== ''"
+            @click="exportDataset('coco')"
+          >
+            {{ exportingDataset === 'coco' ? 'Exporting…' : 'Export COCO Zip' }}
+          </button>
+        </div>
+      </div>
+      <div class="hint">
+        Export includes confirmed annotations only. Import appends images and marks imported annotations as confirmed.
+      </div>
+      <div class="row wrap-row">
+        <label class="label">Import</label>
+        <select v-model="importFormat" class="input compact" data-testid="dataset-import-format">
+          <option value="yolo">YOLO Zip</option>
+          <option value="coco">COCO Zip</option>
+        </select>
+        <input
+          ref="importInputRef"
+          class="input"
+          data-testid="dataset-import-input"
+          type="file"
+          accept=".zip,application/zip"
+          @change="onPickImportFile"
+        />
+        <button
+          class="btn primary"
+          data-testid="dataset-import-btn"
+          type="button"
+          :disabled="!canImportDataset"
+          @click="importDataset"
+        >
+          {{ importingDataset ? 'Importing…' : 'Import Dataset' }}
+        </button>
+      </div>
+      <div v-if="importFile" class="hint">Ready to import: {{ importFile.name }}</div>
+      <div v-if="datasetMessage" class="hint dataset-status" data-testid="dataset-status">{{ datasetMessage }}</div>
+    </div>
+
     <div class="list">
       <div v-if="loading" class="hint">加载中…</div>
       <div v-else-if="images.length === 0" class="hint">暂无图片，先上传。</div>
@@ -338,6 +471,16 @@ watch(projectId, () => {
   align-items: center;
 }
 
+.wrap-row {
+  flex-wrap: wrap;
+}
+
+.dataset-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .label {
   width: 70px;
   opacity: 0.75;
@@ -352,6 +495,10 @@ watch(projectId, () => {
   color: inherit;
 }
 
+.input.compact {
+  flex: 0 0 160px;
+}
+
 .list {
   border-top: 1px solid rgba(255, 255, 255, 0.06);
   padding-top: 16px;
@@ -363,6 +510,10 @@ watch(projectId, () => {
 
 .hint.warn {
   color: rgba(248, 81, 73, 0.95);
+}
+
+.dataset-status {
+  color: rgba(56, 211, 159, 0.95);
 }
 
 .mono {
