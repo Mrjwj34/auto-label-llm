@@ -65,7 +65,7 @@
 | M7 | 数据集导入/导出 | 导出 YOLO/COCO（最小可用） | ✅ | 28b96d4 |
 | M8 | 微调流水线（可选） | 用确认数据导出 → 启动训练任务 | ✅ | d336852 |
 | M9 | 评估与质量评分（MVP） | val/test 指标 + 线上风险排序 | ✅ | 85598a2 |
-| M10 | 配置中心、热更新与环境切换 | 项目配置真正驱动推理/后处理/评估，并支持一键切换测试/生产档位 | ⬜ | - |
+| M10 | 配置中心、热更新与环境切换 | 项目配置真正驱动推理/后处理/评估，并支持一键切换测试/生产档位 | 🟡 | 26efec0 |
 | M11 | 真实 LLM 推理与模型切换 | vLLM/OpenAI-compatible 真接入 + `active_model_tag` 真正生效 | ⬜ | - |
 | M12 | 真实 SAM2 与后处理 | 真实 mask/polygon + `set_image` 缓存 + OpenCV 后处理 | ⬜ | - |
 | M13 | 任务基础设施升级 | Celery / Redis / WebSocket / GPU 锁替换当前轻量任务骨架 | ⬜ | - |
@@ -376,3 +376,4 @@
 | 2026-04-02 | M8 | 🟡 → ✅ | d336852 | `.venv\Scripts\python.exe -m compileall backend`、`.venv\Scripts\python.exe -m pytest -q`、`npm run build`、`node output\playwright\m8\node\e2e-m8.cjs` | ✅ 通过 | 微调流水线人工验收通过，进入 M9 评估与质量评分 |
 | 2026-04-02 | M9 | ⬜ → 🟡 | 85598a2 | `.venv\Scripts\python.exe -m compileall backend`、`.venv\Scripts\python.exe -m pytest -q`、`npm run build`、`node output\playwright\m9\node\e2e-m9.cjs` | ⏳ 待验收 | val/test 评估任务 + 评估报告导出 + 图片/标注质量评分 + 图片列表风险排序 |
 | 2026-04-02 | M9 | 🟡 → ✅ | 85598a2 | `.venv\Scripts\python.exe -m compileall backend`、`.venv\Scripts\python.exe -m pytest -q`、`npm run build`、`node output\playwright\m9\node\e2e-m9.cjs` | ✅ 通过 | 评估与质量评分人工验收通过，进入 M10 配置中心、热更新与环境切换 |
+| 2026-04-02 | M10 | ⬜ → 🟡 | 26efec0 | `.venv\Scripts\python.exe -m compileall backend`、`.venv\Scripts\python.exe -m pytest -q`、`npm run build`、`node output\playwright\m10\node\e2e-m10.cjs` | ⏳ 待验收 | 项目设置面板 + 系统 profile 切换 + 热更新/显式重载提示 + 一键测试/生产档位切换 |
