@@ -46,8 +46,8 @@
 | M5 | 分割能力（SAM Stub → 真实接入） | 生成 mask/polygon 并渲染 | ✅ | 71e5864 |
 | M6 | 人工纠错（增删改确认） | 点选/补框/删除/确认生效 | ✅ | 2bc7e03 |
 | M7 | 数据集导入/导出 | 导出 YOLO/COCO（最小可用） | ✅ | 28b96d4 |
-| M8 | 微调流水线（可选） | 用确认数据导出 → 启动训练任务 | 🟡 | d336852 |
-| M9 | 评估与质量评分（MVP） | val/test 指标 + 线上风险排序 | ⬜ | - |
+| M8 | 微调流水线（可选） | 用确认数据导出 → 启动训练任务 | ✅ | d336852 |
+| M9 | 评估与质量评分（MVP） | val/test 指标 + 线上风险排序 | 🟡 | 85598a2 |
 | M10 | 一键启动与演示脚本 | 一条命令启动所有服务 | ⬜ | - |
 
 ---
@@ -241,3 +241,5 @@
 | 2026-04-02 | M7 | ⬜ → 🟡 | 28b96d4 | `.venv\Scripts\python.exe -m pytest -q`、`npm run build`、`node output\playwright\m7\node\e2e-m7.cjs` | ⏳ 待验收 | 项目级 YOLO/COCO 导出 + YOLO/COCO 导入，图片列表页已接入入口 |
 | 2026-04-02 | M7 | 🟡 → ✅ | 28b96d4 | `.venv\Scripts\python.exe -m pytest -q`、`npm run build`、`node output\playwright\m7\node\e2e-m7.cjs` | ✅ 通过 | 数据集导入/导出人工验收通过，进入 M8 微调流水线 |
 | 2026-04-02 | M8 | ⬜ → 🟡 | d336852 | `.venv\Scripts\python.exe -m compileall backend`、`.venv\Scripts\python.exe -m pytest -q`、`npm run build`、`node output\playwright\m8\node\e2e-m8.cjs` | ⏳ 待验收 | 确认 train 标注导出微调数据集 + 任务日志/产物路径展示 + LoRA 激活闭环 |
+| 2026-04-02 | M8 | 🟡 → ✅ | d336852 | `.venv\Scripts\python.exe -m compileall backend`、`.venv\Scripts\python.exe -m pytest -q`、`npm run build`、`node output\playwright\m8\node\e2e-m8.cjs` | ✅ 通过 | 微调流水线人工验收通过，进入 M9 评估与质量评分 |
+| 2026-04-02 | M9 | ⬜ → 🟡 | 85598a2 | `.venv\Scripts\python.exe -m compileall backend`、`.venv\Scripts\python.exe -m pytest -q`、`npm run build`、`node output\playwright\m9\node\e2e-m9.cjs` | ⏳ 待验收 | val/test 评估任务 + 评估报告导出 + 图片/标注质量评分 + 图片列表风险排序 |
