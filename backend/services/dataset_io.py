@@ -21,6 +21,7 @@ from backend.models.annotation import Annotation
 from backend.models.image import Image
 from backend.models.project import Project
 from backend.services.project_settings import get_project_labels
+from backend.services.quality_service import refresh_project_quality_scores
 from backend.services.sam_service import SAMService
 from backend.utils.storage import ensure_project_dirs, project_dir, resolve_path, safe_filename, save_project_image_bytes
 
@@ -366,6 +367,7 @@ def _import_yolo_dataset(
         raise AppError(400, "no images were imported from YOLO archive")
 
     _merge_project_labels(project, [*existing_labels, *seen_labels])
+    refresh_project_quality_scores(db, project.id)
     db.add(project)
     return DatasetImportResult(imported_count=imported_images, annotation_count=annotation_count, labels=get_project_labels(project))
 
@@ -533,6 +535,7 @@ def _import_coco_dataset(
         raise AppError(400, "no images were imported from COCO archive")
 
     _merge_project_labels(project, [*existing_labels, *seen_labels])
+    refresh_project_quality_scores(db, project.id)
     db.add(project)
     return DatasetImportResult(imported_count=imported_images, annotation_count=annotation_count, labels=get_project_labels(project))
 

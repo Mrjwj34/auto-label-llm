@@ -16,6 +16,7 @@ from backend.config import get_settings
 from backend.models.annotation import Annotation
 from backend.models.image import Image
 from backend.models.project import Project
+from backend.services.quality_service import refresh_image_quality
 from backend.services.project_settings import get_project_labels, load_project_settings
 from backend.services.sam_service import SAMService
 from backend.utils.storage import resolve_path
@@ -358,7 +359,6 @@ def replace_auto_annotations(db: Session, image: Image, result: AutoAnnotationRe
         extra_payload["warning"] = result.warning
     extra_text = json.dumps(extra_payload, ensure_ascii=False)
 
-    confidence_values: list[float] = []
     for generated in result.annotations:
         ann = Annotation(
             image_id=image.id,
@@ -367,13 +367,9 @@ def replace_auto_annotations(db: Session, image: Image, result: AutoAnnotationRe
             polygon=generated.polygon,
             mask_path=generated.mask_path,
             confidence=generated.confidence,
-            quality_score=generated.confidence,
             source="auto",
             extra=extra_text,
         )
-        if generated.confidence is not None:
-            confidence_values.append(generated.confidence)
         db.add(ann)
 
-    image.quality_score = round(sum(confidence_values) / len(confidence_values), 4) if confidence_values else None
-    db.add(image)
+    refresh_image_quality(db, image)

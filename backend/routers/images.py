@@ -21,6 +21,7 @@ from backend.models.image import Image
 from backend.models.project import Project
 from backend.services.auto_annotator import generate_auto_annotations, replace_auto_annotations
 from backend.services.project_settings import get_project_labels
+from backend.services.quality_service import refresh_image_quality
 from backend.services.sam_service import SAMService
 from backend.tasks.task_manager import TaskContext, get_task_manager
 from backend.utils.storage import resolve_path, save_project_image_bytes
@@ -297,6 +298,8 @@ def create_annotation(image_id: int, payload: AnnotationCreateIn, db: Session = 
         source=payload.source,
     )
     db.add(ann)
+    db.flush()
+    refresh_image_quality(db, image)
     db.commit()
     db.refresh(ann)
     return ok({"id": ann.id})
@@ -341,6 +344,8 @@ def predict_annotation(image_id: int, payload: ImagePredictIn, db: Session = Dep
                 created.polygon = prediction.polygon
                 created.mask_path = prediction.mask_path
             db.add(created)
+            db.flush()
+            refresh_image_quality(db, image)
             db.commit()
             db.refresh(created)
             return ok(
@@ -364,6 +369,8 @@ def predict_annotation(image_id: int, payload: ImagePredictIn, db: Session = Dep
             annotation.polygon = prediction.polygon
             annotation.mask_path = prediction.mask_path
         db.add(annotation)
+        db.flush()
+        refresh_image_quality(db, image)
         db.commit()
         db.refresh(annotation)
         return ok(
@@ -391,6 +398,8 @@ def predict_annotation(image_id: int, payload: ImagePredictIn, db: Session = Dep
     annotation.source = "corrected"
     annotation.is_confirmed = False
     db.add(annotation)
+    db.flush()
+    refresh_image_quality(db, image)
     db.commit()
     db.refresh(annotation)
     return ok(

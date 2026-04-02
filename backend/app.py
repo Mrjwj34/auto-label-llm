@@ -13,6 +13,7 @@ from backend.config import get_settings
 from backend.database import init_db
 from backend.routers.health import router as health_router
 from backend.routers.annotations import router as annotations_router
+from backend.routers.evaluations import router as evaluations_router
 from backend.routers.finetune import router as finetune_router
 from backend.routers.images import router as images_router
 from backend.routers.projects import router as projects_router
@@ -75,6 +76,7 @@ def create_app() -> FastAPI:
     app.include_router(projects_router)
     app.include_router(images_router)
     app.include_router(annotations_router)
+    app.include_router(evaluations_router)
     app.include_router(finetune_router)
     app.include_router(tasks_router)
 
