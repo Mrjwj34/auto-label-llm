@@ -11,7 +11,7 @@
 ### 0.1 分阶段交付
 
 - 每个里程碑都必须满足：
-  - `自动验证`：我在本地运行测试/构建通过（或明确说明暂缺的原因与替代验证）。
+  - `自动验证`：我在本地运行测试/构建通过（或明确说明暂缺的原因与替代验证；若本机算力不足以跑真实模型，则必须补足等价的单测/集成测试/契约测试）。
   - `人工验证`：你按“人工验收清单”操作确认通过。
   - `git 提交`：通过后把该里程碑状态从 `⏳` 更新为 `✅`，并记录 commit hash。
 - 未通过人工验证的里程碑，只能标记为 `🟡 待人工验收`，不能进入下一里程碑的功能开发（允许修 bug）。
@@ -30,6 +30,23 @@
 - `✅ 已完成`
 - `⛔ 阻塞（记录原因 + 解决方案）`
 
+### 0.4 环境档位与验证替代策略
+
+- 必须支持至少三套可切换环境档位：
+  - `dev_low_resource`：开发机低算力档。默认使用 stub / mock / CPU / 最小模型配置，确保日常开发、页面联调、API 联调可持续进行。
+  - `test_real_stack`：后续统一联调档。用于连接真实 vLLM / SAM / Redis / Celery / 训练环境，验证真实链路。
+  - `demo_prod`：演示/答辩档。面向高算力机器，使用最终推荐配置。
+- 必须提供**一键切换测试配置和生产配置**的机制：
+  - 形式可以是 `scripts/use-profile.ps1`、`start --profile xxx`、`.env.profile` 覆盖或等价方案；
+  - 目标是不手改零散环境变量，也不手动改代码。
+- 当前开发机算力较低，M10～M15 的本地开发默认以 `dev_low_resource` 为主；真实模型、真实微调、完整外部依赖联调可延后到 `test_real_stack` 环境统一进行。
+- 在统一联调之前，凡是无法在开发机直接跑真实链路的功能，必须用更详尽的替代验证覆盖，包括但不限于：
+  - 单元测试：坐标转换、配置生效、后处理、质量评分、日志解析、任务状态迁移；
+  - 集成测试：API 调用链、任务创建与轮询、模型切换状态、评估报告生成、导入导出闭环；
+  - 浏览器测试：关键页面交互、状态展示、配置切换、错误提示；
+  - 契约测试：对外部模型/训练进程的请求 payload、响应格式、配置快照、日志格式进行固定样例校验。
+- `test_real_stack` 统一联调时，再补充真实外部依赖的验收记录；届时应优先验证“配置切换正确性、真实链路可跑通、降级路径仍有效”。
+
 ---
 
 ## 1. 里程碑总览（Roadmap）
@@ -47,8 +64,16 @@
 | M6 | 人工纠错（增删改确认） | 点选/补框/删除/确认生效 | ✅ | 2bc7e03 |
 | M7 | 数据集导入/导出 | 导出 YOLO/COCO（最小可用） | ✅ | 28b96d4 |
 | M8 | 微调流水线（可选） | 用确认数据导出 → 启动训练任务 | ✅ | d336852 |
-| M9 | 评估与质量评分（MVP） | val/test 指标 + 线上风险排序 | 🟡 | 85598a2 |
-| M10 | 一键启动与演示脚本 | 一条命令启动所有服务 | ⬜ | - |
+| M9 | 评估与质量评分（MVP） | val/test 指标 + 线上风险排序 | ✅ | 85598a2 |
+| M10 | 配置中心、热更新与环境切换 | 项目配置真正驱动推理/后处理/评估，并支持一键切换测试/生产档位 | ⬜ | - |
+| M11 | 真实 LLM 推理与模型切换 | vLLM/OpenAI-compatible 真接入 + `active_model_tag` 真正生效 | ⬜ | - |
+| M12 | 真实 SAM2 与后处理 | 真实 mask/polygon + `set_image` 缓存 + OpenCV 后处理 | ⬜ | - |
+| M13 | 任务基础设施升级 | Celery / Redis / WebSocket / GPU 锁替换当前轻量任务骨架 | ⬜ | - |
+| M14 | 真实 LoRA 微调闭环 | LLaMA-Factory 真训练 + LoRA 激活后真正参与推理 | ⬜ | - |
+| M15 | 评估系统增强与对比看板 | mask 指标、run 对比、失败案例分析、性能统计 | ⬜ | - |
+| M16 | 一键启动与演示脚本 | 一条命令启动所有服务与外部依赖 | ⬜ | - |
+
+> 说明：原 M10 “一键启动与演示脚本”顺延为 M16。M10～M15 用于补齐当前实现与 `design_doc.md` 之间的差距，目标是最终与设计文档一致。
 
 ---
 
@@ -209,11 +234,118 @@
 
 ---
 
-### M10 — 一键启动与演示脚本
+### M10 — 配置中心、热更新与环境切换
+
+**范围**
+- 将 `projects.config` 中已定义的关键字段真正接入运行链路：`llm.*`、`sam.*`、`postprocess.*`、`quality.*`、`evaluation.*`。
+- 明确“热更新立即生效”和“需显式重载/重启”的配置项，并在后端接口与前端文案中体现。
+- 支持一键切换 `dev_low_resource` / `test_real_stack` / `demo_prod` 三类配置档位，覆盖本地开发、统一联调和答辩演示。
+- 补齐项目设置面板，支持查看、编辑、回显当前生效配置。
+- 增加系统级模型激活接口（如 base model profile 切换），与项目级 `active_model_tag` / `model_profile` 联动。
+
+**验收**
+- 可以通过单一入口一键切换“测试配置”和“生产/演示配置”，无需手工逐个改环境变量。
+- 修改 `quality.threshold_review`、`evaluation.*`、`postprocess.*` 后，后续任务与页面展示能体现变化。
+- 修改 `llm.base_model`、`sam.checkpoint` 时，系统明确提示“需显式重载”，且能完成一次重载生效验证。
+
+---
+
+### M11 — 真实 LLM 推理与模型切换
+
+**范围**
+- 从当前自动标注逻辑中拆出独立的 `services/vllm_client.py`，统一封装 OpenAI-compatible / vLLM 调用、超时、重试、降级与日志。
+- 让 `active_model_tag` 真正参与自动标注与评估，而不是仅作为展示字段或评估快照。
+- 支持 `base` / `lora:{job_id}` / 固定 base model profile 的显式切换，并把实际使用的模型记录到任务日志与评估报告。
+- 保留 stub 回退能力，但将其明确为降级路径，而不是默认主路径。
+
+**验收**
+- 外部 vLLM 服务可被实际调用，失败时可回退并给出清晰日志。
+- 切换 `base` / `lora:{job_id}` 后，同一张图的新标注结果来源与日志可区分，评估记录中的 `model_tag` 与实际推理一致。
+
+**本地验证策略**
+- 在 `dev_low_resource` 下，优先通过详尽的 API / 集成测试、请求契约测试、错误回退测试验证逻辑正确性。
+- 真实 vLLM 联调放到 `test_real_stack` 统一进行，并在进度日志中单独记录。
+
+---
+
+### M12 — 真实 SAM2 与后处理
+
+**范围**
+- 引入真实 `SAM2ImagePredictor` 服务封装，支持 lazy load、checkpoint 选择、CPU/CUDA 设备切换。
+- 实现 `set_image` / 当前图 embedding 缓存，提升连续点选纠错与重复分割的响应速度。
+- 新增 `services/postprocess.py`，实现闭运算、边界裁剪、Douglas-Peucker 简化、多边形/Mask 落盘。
+- 统一分割项目的自动标注、点选纠错、导入与评估逻辑，确保都基于真实 mask/polygon。
+
+**验收**
+- 分割项目能生成真实 mask 文件和 polygon，而不再是规则化假多边形。
+- 同一张图连续纠错可复用缓存，交互速度明显优于首次加载。
+
+**本地验证策略**
+- 在真实 SAM2 无法本地运行时，先用固定样例、后处理单测、接口集成测试和浏览器纠错测试替代。
+- 真实 checkpoint、CUDA/CPU 切换、embedding 缓存命中效果在 `test_real_stack` 环境集中验收。
+
+---
+
+### M13 — 任务基础设施升级
+
+**范围**
+- 使用 Celery + Redis 替换当前内存 `TaskManager`，同时保留现有 REST 状态查询接口的兼容性。
+- 接入 Redis result backend，统一标注、评估、微调任务状态存储。
+- 增加 WebSocket `WS /ws/tasks/{task_id}` 进度推送，减少前端轮询依赖。
+- 实现 `utils/gpu_lock.py`，保证 vLLM / SAM / 微调之间的 GPU 资源互斥与任务串行策略。
+
+**验收**
+- FastAPI 与 Worker 分进程运行时，任务状态仍可稳定查询和推送。
+- 并发触发标注与微调时，任务按锁/队列顺序执行，无显存争抢导致的 OOM 或状态错乱。
+
+**本地验证策略**
+- 开发机可先用进程内 / 本地 Redis 的集成测试、任务顺序测试和 WebSocket 契约测试验证。
+- 真正的多进程联调和 GPU 锁冲突测试在 `test_real_stack` 环境统一完成。
+
+---
+
+### M14 — 真实 LoRA 微调闭环
+
+**范围**
+- 将当前 stub 微调任务替换为真实 LLaMA-Factory subprocess 训练流程。
+- 完成 `tools/export_dataset.py`、prompt template、训练配置自动生成、日志解析与失败定位。
+- 激活接口真正负责停启或重载 vLLM，并挂载指定 LoRA adapter。
+- 前端补齐训练曲线、产物信息和更明确的“当前推理模型”状态展示。
+
+**验收**
+- 能产出真实训练目录、日志与 LoRA adapter，而不是占位文件。
+- 激活后，后续自动标注与评估实际使用该 LoRA，并可与 `base` 做结果对比。
+
+**本地验证策略**
+- 在开发机无法跑真实训练时，先把数据导出、配置生成、日志解析、激活链路、失败处理全部用单测和集成测试覆盖。
+- 真实训练与真实 LoRA 激活效果在 `test_real_stack` 环境统一验收。
+
+---
+
+### M15 — 评估系统增强与对比看板
+
+**范围**
+- 在 M9 bbox 指标基础上，补充分割指标 `mIoU_mask` / `Dice`，并支持更细粒度的 per-class / per-image 报告。
+- 增加评估对比看板，用于展示 `base vs lora`、上一次 vs 当前 run 的结果差异。
+- 可选接入 `pycocotools / COCOeval` 输出更标准的离线指标，便于论文和答辩展示。
+- 增加性能与效率统计：自动标注耗时、SAM 耗时、采纳率、失败样本分析等。
+
+**验收**
+- 能比较两次 run 的关键指标与失败样本。
+- 能输出更完整的评估报告，用于答辩展示与论文截图。
+
+**本地验证策略**
+- 先用固定数据集、黄金报告、API 集成测试和浏览器回归测试保证指标计算与展示稳定。
+- 真实模型前后对比与最终论文截图在统一联调环境补齐。
+
+---
+
+### M16 — 一键启动与演示脚本
 
 **范围**
 - 提供 Windows 友好的 `start.ps1`，以及可选的 `start.sh`（便于部署到 Linux 演示机）。
-- 文档说明如何准备 Redis / vLLM / SAM 权重等外部依赖。
+- 文档说明如何准备 Redis / vLLM / SAM 权重 / LLaMA-Factory 等外部依赖。
+- 支持一键拉起 FastAPI、Celery Worker、Redis、vLLM 及前端开发/演示环境，或在缺失依赖时给出明确提示。
 
 **验收**
 - 从空环境到可演示：按 README 走一遍不踩坑（或明确每个依赖缺失时的提示与替代方案）。
@@ -243,3 +375,4 @@
 | 2026-04-02 | M8 | ⬜ → 🟡 | d336852 | `.venv\Scripts\python.exe -m compileall backend`、`.venv\Scripts\python.exe -m pytest -q`、`npm run build`、`node output\playwright\m8\node\e2e-m8.cjs` | ⏳ 待验收 | 确认 train 标注导出微调数据集 + 任务日志/产物路径展示 + LoRA 激活闭环 |
 | 2026-04-02 | M8 | 🟡 → ✅ | d336852 | `.venv\Scripts\python.exe -m compileall backend`、`.venv\Scripts\python.exe -m pytest -q`、`npm run build`、`node output\playwright\m8\node\e2e-m8.cjs` | ✅ 通过 | 微调流水线人工验收通过，进入 M9 评估与质量评分 |
 | 2026-04-02 | M9 | ⬜ → 🟡 | 85598a2 | `.venv\Scripts\python.exe -m compileall backend`、`.venv\Scripts\python.exe -m pytest -q`、`npm run build`、`node output\playwright\m9\node\e2e-m9.cjs` | ⏳ 待验收 | val/test 评估任务 + 评估报告导出 + 图片/标注质量评分 + 图片列表风险排序 |
+| 2026-04-02 | M9 | 🟡 → ✅ | 85598a2 | `.venv\Scripts\python.exe -m compileall backend`、`.venv\Scripts\python.exe -m pytest -q`、`npm run build`、`node output\playwright\m9\node\e2e-m9.cjs` | ✅ 通过 | 评估与质量评分人工验收通过，进入 M10 配置中心、热更新与环境切换 |
