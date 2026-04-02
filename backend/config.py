@@ -44,6 +44,7 @@ DEFAULT_PROJECT_SETTINGS: dict[str, Any] = {
     # User-defined label list (fixed prompt; no free-form prompting by users)
     "labels": [],
     "model_profile": "auto",
+    "active_model_tag": "base",
     "llm": {"base_model": "qwen3-vl-2b", "auto_order": ["2b", "4b", "8b"], "max_tokens": 2048},
     "sam": {"checkpoint": "sam2_hiera_tiny", "device": "cuda", "multimask_output": False},
     "postprocess": {

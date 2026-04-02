@@ -16,6 +16,21 @@ type ImageRow = {
 
 type DatasetFormat = 'yolo' | 'coco'
 
+type FinetuneJobRow = {
+  id: number
+  project_id: number
+  status: 'pending' | 'running' | 'done' | 'failed'
+  dataset_path: string | null
+  lora_path: string | null
+  log_path: string | null
+  started_at: string | null
+  finished_at: string | null
+  created_at: string | null
+  model_tag: string
+  is_active: boolean | null
+  config: Record<string, unknown> | null
+}
+
 const route = useRoute()
 const router = useRouter()
 
@@ -41,6 +56,17 @@ const importingDataset = ref(false)
 const exportingDataset = ref<DatasetFormat | ''>('')
 const datasetMessage = ref('')
 const canImportDataset = computed(() => !!importFile.value && !importingDataset.value)
+const finetuneJobs = ref<FinetuneJobRow[]>([])
+const finetuneLog = ref('')
+const finetuneStarting = ref(false)
+const finetuneLoading = ref(false)
+const finetuneActivatingId = ref<number | null>(null)
+const finetuneMessage = ref('')
+const activeModelTag = ref('base')
+const latestFinetuneJob = computed(() => finetuneJobs.value[0] ?? null)
+const canStartFinetune = computed(
+  () => !finetuneStarting.value && !['pending', 'running'].includes(latestFinetuneJob.value?.status ?? '')
+)
 
 const taskState = reactive({
   taskId: '' as string,
@@ -50,6 +76,7 @@ const taskState = reactive({
 })
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let finetunePollTimer: ReturnType<typeof setInterval> | null = null
 
 function imageSrc(img: ImageRow): string {
   const base = API_BASE_URL.replace(/\/$/, '')
@@ -60,6 +87,11 @@ function imageSrc(img: ImageRow): string {
 function stopPolling() {
   if (pollTimer) clearInterval(pollTimer)
   pollTimer = null
+}
+
+function stopFinetunePolling() {
+  if (finetunePollTimer) clearInterval(finetunePollTimer)
+  finetunePollTimer = null
 }
 
 async function fetchImages() {
@@ -80,6 +112,7 @@ async function fetchProjectSettings() {
   if (!Number.isFinite(projectId.value) || projectId.value <= 0) return
   try {
     const resp = await api.get(`/api/projects/${projectId.value}/settings`)
+    activeModelTag.value = String(resp.data?.data?.active_model_tag ?? 'base')
     const labels = resp.data?.data?.labels
     if (Array.isArray(labels)) {
       labelsText.value = labels.join(', ')
@@ -183,6 +216,92 @@ async function importDataset() {
   }
 }
 
+async function fetchFinetuneLog(jobId: number) {
+  const resp = await api.get(`/api/finetune/${jobId}/log`)
+  finetuneLog.value = String(resp.data?.data?.log ?? '')
+}
+
+async function fetchFinetuneJobs() {
+  if (!Number.isFinite(projectId.value) || projectId.value <= 0) return
+  finetuneLoading.value = true
+  try {
+    const resp = await api.get(`/api/projects/${projectId.value}/finetune-jobs`)
+    const rows = Array.isArray(resp.data?.data) ? (resp.data.data as FinetuneJobRow[]) : []
+    finetuneJobs.value = rows
+
+    const latest = rows[0] ?? null
+    if (latest) {
+      await fetchFinetuneLog(latest.id)
+    } else {
+      finetuneLog.value = ''
+    }
+
+    if (latest && (latest.status === 'pending' || latest.status === 'running')) {
+      if (!finetunePollTimer) {
+        finetunePollTimer = setInterval(() => {
+          void fetchFinetuneJobs()
+          void fetchProjectSettings()
+        }, 800)
+      }
+    } else {
+      stopFinetunePolling()
+    }
+  } catch (err: any) {
+    if (finetuneJobs.value.length === 0) {
+      finetuneLog.value = ''
+    }
+    error.value = err?.response?.data?.message
+      ? String(err.response.data.message)
+      : err?.message
+        ? String(err.message)
+        : String(err)
+    stopFinetunePolling()
+  } finally {
+    finetuneLoading.value = false
+  }
+}
+
+async function startFinetune() {
+  finetuneStarting.value = true
+  error.value = ''
+  finetuneMessage.value = ''
+  try {
+    const resp = await api.post('/api/finetune/start', { project_id: projectId.value })
+    const jobId = Number(resp.data?.data?.job_id ?? 0)
+    if (!jobId) throw new Error('no job_id returned')
+    finetuneMessage.value = `Finetune job #${jobId} started.`
+    await fetchFinetuneJobs()
+  } catch (err: any) {
+    error.value = err?.response?.data?.message
+      ? String(err.response.data.message)
+      : err?.message
+        ? String(err.message)
+        : String(err)
+  } finally {
+    finetuneStarting.value = false
+  }
+}
+
+async function activateFinetune(jobId: number) {
+  finetuneActivatingId.value = jobId
+  error.value = ''
+  finetuneMessage.value = ''
+  try {
+    await api.post(`/api/finetune/${jobId}/activate`)
+    finetuneMessage.value = `Activated model lora:${jobId}.`
+    await fetchProjectSettings()
+    await fetchFinetuneJobs()
+  } catch (err: any) {
+    error.value = err?.response?.data?.message
+      ? String(err.response.data.message)
+      : err?.message
+        ? String(err.message)
+        : String(err)
+  } finally {
+    finetuneActivatingId.value = null
+  }
+}
+
 function backToProjects() {
   router.push({ name: 'projects' })
 }
@@ -275,15 +394,18 @@ async function startBatchAnnotate() {
 onMounted(() => {
   void fetchImages()
   void fetchProjectSettings()
+  void fetchFinetuneJobs()
 })
 
 onBeforeUnmount(() => {
   stopPolling()
+  stopFinetunePolling()
 })
 
 watch(projectId, () => {
   void fetchImages()
   void fetchProjectSettings()
+  void fetchFinetuneJobs()
 })
 </script>
 
@@ -407,6 +529,48 @@ watch(projectId, () => {
       <div v-if="datasetMessage" class="hint dataset-status" data-testid="dataset-status">{{ datasetMessage }}</div>
     </div>
 
+    <div class="card">
+      <div class="row wrap-row">
+        <label class="label">Finetune</label>
+        <div class="dataset-actions">
+          <button
+            class="btn primary"
+            data-testid="finetune-start-btn"
+            type="button"
+            :disabled="!canStartFinetune"
+            @click="startFinetune"
+          >
+            {{ finetuneStarting ? 'Starting…' : 'Start Finetune (M8)' }}
+          </button>
+          <button
+            v-if="latestFinetuneJob && latestFinetuneJob.status === 'done' && !latestFinetuneJob.is_active"
+            class="btn"
+            data-testid="finetune-activate-btn"
+            type="button"
+            :disabled="finetuneActivatingId === latestFinetuneJob.id"
+            @click="activateFinetune(latestFinetuneJob.id)"
+          >
+            {{ finetuneActivatingId === latestFinetuneJob.id ? 'Activating…' : `Activate ${latestFinetuneJob.model_tag}` }}
+          </button>
+        </div>
+      </div>
+      <div class="hint">
+        Finetune uses confirmed annotations from train images only. Current active model:
+        <span class="mono" data-testid="active-model-tag">{{ activeModelTag }}</span>
+      </div>
+      <div v-if="finetuneMessage" class="hint finetune-status">{{ finetuneMessage }}</div>
+      <div v-if="latestFinetuneJob" class="task">
+        <div class="task-meta" data-testid="finetune-status">
+          job={{ latestFinetuneJob.id }} · {{ latestFinetuneJob.status }} · {{ latestFinetuneJob.model_tag }}
+        </div>
+        <div class="hint mono">dataset={{ latestFinetuneJob.dataset_path ?? '-' }}</div>
+        <div class="hint mono">artifact={{ latestFinetuneJob.lora_path ?? '-' }}</div>
+        <div class="hint mono">log={{ latestFinetuneJob.log_path ?? '-' }}</div>
+        <pre class="log-box" data-testid="finetune-log">{{ finetuneLog || 'No log output yet.' }}</pre>
+      </div>
+      <div v-else-if="!finetuneLoading" class="hint">No finetune job yet. Start one after confirming train annotations.</div>
+    </div>
+
     <div class="list">
       <div v-if="loading" class="hint">加载中…</div>
       <div v-else-if="images.length === 0" class="hint">暂无图片，先上传。</div>
@@ -516,6 +680,10 @@ watch(projectId, () => {
   color: rgba(56, 211, 159, 0.95);
 }
 
+.finetune-status {
+  color: rgba(125, 211, 252, 0.95);
+}
+
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
 }
@@ -536,6 +704,21 @@ watch(projectId, () => {
   opacity: 0.8;
   font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+}
+
+.log-box {
+  margin: 0;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .grid {

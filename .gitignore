@@ -15,10 +15,10 @@ dist/
 .playwright-cli/
 
 # Local artifacts
-data/
-models/
-logs/
-output/playwright/
+/data/
+/models/
+/logs/
+/output/playwright/
 configs/app.local.yaml
 .env
 
