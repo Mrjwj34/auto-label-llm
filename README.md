@@ -25,6 +25,29 @@ python -m backend.main
 
 健康检查：`GET http://127.0.0.1:8000/healthz`
 
+### 配置档位与一键切换（M10）
+
+- 后端会优先读取仓库根目录下的 `.env.active`
+- 前端 Vite 会读取 `frontend/.env.local`
+- 推荐直接用脚本切换：
+
+```powershell
+.\scripts\use-profile.ps1 -Profile dev_low_resource
+.\scripts\use-profile.ps1 -Profile test_real_stack
+.\scripts\use-profile.ps1 -Profile demo_prod
+```
+
+- 也可以在启动时一起切换：
+
+```powershell
+.\start-dev.ps1 -Profile dev_low_resource
+.\start-dev.ps1 -Profile demo_prod
+```
+
+- `dev_low_resource`：低算力开发档，默认 `stub/mock/CPU` 友好
+- `test_real_stack`：后续统一联调档，面向真实 vLLM / SAM / 训练环境
+- `demo_prod`：答辩/演示档，使用更激进的模型与超时配置
+
 ### 自动标注（M4）
 
 - 默认使用 `stub` 后端，配置项目 `labels` 后即可直接跑通 bbox 自动标注。
@@ -46,6 +69,21 @@ npm run dev
 ```
 
 默认前端地址：`http://localhost:5173`
+
+### 项目设置面板（M10）
+
+在项目图片列表页已经接入项目级配置中心，可直接查看和保存：
+
+- `model_profile`、`llm.*`、`sam.*`
+- `postprocess.*`
+- `quality.*`
+- `evaluation.*`
+
+其中：
+
+- `postprocess.*`、`quality.*`、`evaluation.*` 为热更新字段，保存后会影响后续任务与页面展示
+- `model_profile`、`llm.base_model`、`sam.*` 等字段会在保存后提示“需要显式重载/重启”
+- 系统 profile 切换按钮会同时更新 `.env.active` 和 `frontend/.env.local`
 
 ---
 

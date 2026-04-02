@@ -11,14 +11,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.api import AppError, ok
-from backend.config import DEFAULT_PROJECT_SETTINGS, deep_merge
 from backend.database import get_session_factory
 from backend.deps import get_db
 from backend.models.image import Image
 from backend.models.project import Project
 from backend.services.auto_annotator import generate_auto_annotations, replace_auto_annotations
 from backend.services.dataset_io import export_project_dataset, import_project_dataset
-from backend.services.project_settings import get_project_labels
+from backend.services.project_settings import get_project_labels, load_stored_project_settings
+from backend.services.settings_service import (
+    build_project_settings_response,
+    sanitize_project_settings_patch,
+    settings_change_summary,
+)
 from backend.tasks.task_manager import TaskContext, get_task_manager
 from backend.utils.storage import delete_project_dirs, ensure_project_dirs
 
@@ -82,16 +86,7 @@ def get_project_settings(project_id: int, db: Session = Depends(get_db)):
     project = db.get(Project, project_id)
     if project is None:
         raise AppError(404, "project not found")
-
-    stored: dict[str, Any] = {}
-    if project.config:
-        try:
-            stored = json.loads(project.config)
-        except Exception:
-            stored = {}
-
-    merged = deep_merge(DEFAULT_PROJECT_SETTINGS, stored)
-    return ok(merged)
+    return ok(build_project_settings_response(project))
 
 
 @router.patch("/projects/{project_id}/settings")
@@ -104,41 +99,26 @@ def patch_project_settings(
     if project is None:
         raise AppError(404, "project not found")
 
-    if not isinstance(patch, dict):
-        raise AppError(400, "settings patch must be an object")
+    cleaned_patch = sanitize_project_settings_patch(patch)
+    stored = load_stored_project_settings(project)
+    merged = dict(stored)
+    for key, value in cleaned_patch.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = {**merged[key], **value}
+        else:
+            merged[key] = value
 
-    stored: dict[str, Any] = {}
-    if project.config:
-        try:
-            stored = json.loads(project.config)
-        except Exception:
-            stored = {}
-
-    if "labels" in patch:
-        labels_value = patch.get("labels")
-        if not isinstance(labels_value, list):
-            raise AppError(400, "labels must be a list of strings")
-        cleaned: list[str] = []
-        seen: set[str] = set()
-        for item in labels_value:
-            if not isinstance(item, str):
-                raise AppError(400, "labels must be a list of strings")
-            s = item.strip()
-            if not s:
-                continue
-            if len(s) > 200:
-                raise AppError(400, "label too long")
-            if s in seen:
-                continue
-            cleaned.append(s)
-            seen.add(s)
-        patch["labels"] = cleaned
-
-    merged = deep_merge(stored, patch)
+    summary = settings_change_summary(cleaned_patch)
     project.config = json.dumps(merged, ensure_ascii=False)
     db.add(project)
     db.commit()
-    return ok(None)
+    return ok(
+        {
+            "settings": build_project_settings_response(project, stored=merged),
+            "change": summary,
+        },
+        message=summary["message"],
+    )
 
 
 @router.post("/projects/{project_id}/annotate")

@@ -1,17 +1,33 @@
 from __future__ import annotations
 
+from math import fabs
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.models.annotation import Annotation
 from backend.models.image import Image
+from backend.models.project import Project
+from backend.services.project_settings import load_project_settings
 
 
 def _clamp01(value: float) -> float:
     return max(0.0, min(1.0, float(value)))
 
 
-def estimate_annotation_quality(annotation: Annotation) -> float | None:
+def _polygon_area(polygon: list[list[float]]) -> float:
+    if len(polygon) < 3:
+        return 0.0
+    area = 0.0
+    for idx, point in enumerate(polygon):
+        next_point = polygon[(idx + 1) % len(polygon)]
+        area += point[0] * next_point[1] - next_point[0] * point[1]
+    return fabs(area) / 2.0
+
+
+def estimate_annotation_quality(annotation: Annotation, *, quality_settings: dict[str, object]) -> float | None:
+    if not bool(quality_settings.get("enable", True)):
+        return None
     if annotation.bbox is None:
         return None
     if bool(annotation.is_confirmed):
@@ -23,7 +39,11 @@ def estimate_annotation_quality(annotation: Annotation) -> float | None:
     if width <= 0.0 or height <= 0.0:
         return 0.0
 
-    if annotation.confidence is not None:
+    use_llm_confidence = bool(quality_settings.get("use_llm_confidence", True))
+    use_sam_score = bool(quality_settings.get("use_sam_score", True))
+    use_consistency_check = bool(quality_settings.get("enable_consistency_check", False))
+
+    if annotation.confidence is not None and use_llm_confidence:
         score = 0.35 + 0.55 * _clamp01(annotation.confidence)
     elif annotation.source == "manual":
         score = 0.72
@@ -59,6 +79,22 @@ def estimate_annotation_quality(annotation: Annotation) -> float | None:
             score -= 0.05
         elif len(annotation.polygon) >= 6:
             score += 0.03
+        if use_sam_score:
+            polygon_area = _polygon_area(annotation.polygon)
+            bbox_area = max(1e-6, area)
+            coverage = polygon_area / bbox_area
+            if 0.55 <= coverage <= 1.02:
+                score += 0.05
+            elif coverage < 0.35 or coverage > 1.1:
+                score -= 0.08
+        if use_consistency_check:
+            polygon_area = _polygon_area(annotation.polygon)
+            bbox_area = max(1e-6, area)
+            coverage = polygon_area / bbox_area
+            if 0.45 <= coverage <= 1.0:
+                score += 0.02
+            else:
+                score -= 0.04
 
     if annotation.source == "manual":
         score += 0.08
@@ -73,21 +109,32 @@ def refresh_image_quality(db: Session, image: Image) -> float | None:
     annotations = db.execute(
         select(Annotation).where(Annotation.image_id == image.id).order_by(Annotation.id.asc())
     ).scalars().all()
+    project = db.get(Project, image.project_id)
+    project_settings = load_project_settings(project)
+    quality_settings = project_settings.get("quality", {}) if isinstance(project_settings.get("quality"), dict) else {}
 
     if not annotations:
-        image.quality_score = None if image.status in ("pending", "annotating") else 0.0
+        if not bool(quality_settings.get("enable", True)):
+            image.quality_score = None
+        else:
+            image.quality_score = None if image.status in ("pending", "annotating") else 0.0
         db.add(image)
         return image.quality_score
 
     scores: list[float] = []
     confirmed_count = 0
     for annotation in annotations:
-        annotation.quality_score = estimate_annotation_quality(annotation)
+        annotation.quality_score = estimate_annotation_quality(annotation, quality_settings=quality_settings)
         db.add(annotation)
         if annotation.quality_score is not None:
             scores.append(annotation.quality_score)
         if bool(annotation.is_confirmed):
             confirmed_count += 1
+
+    if not bool(quality_settings.get("enable", True)):
+        image.quality_score = None
+        db.add(image)
+        return image.quality_score
 
     base_score = (sum(scores) / len(scores)) if scores else 0.0
     if confirmed_count == len(annotations):

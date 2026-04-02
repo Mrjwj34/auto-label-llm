@@ -17,6 +17,7 @@ type ImageRow = {
 
 type DatasetFormat = 'yolo' | 'coco'
 type ImageSortMode = 'newest' | 'quality_asc' | 'quality_desc'
+type EvaluationSplit = 'train' | 'val' | 'test'
 
 type FinetuneJobRow = {
   id: number
@@ -47,6 +48,55 @@ type EvaluationRunRow = {
   config: Record<string, unknown> | null
 }
 
+type ProjectSettingsMeta = {
+  hot_reload_paths: string[]
+  reload_required_paths: string[]
+  available_model_profiles: string[]
+  active_system_profile: string
+  resolved_project_profile: string
+  note: string
+}
+
+type ProjectSettingsChange = {
+  changed_paths: string[]
+  hot_reload_paths: string[]
+  reload_required_paths: string[]
+  other_paths: string[]
+  reload_required: boolean
+  message: string
+}
+
+type SystemProfileRow = {
+  name: string
+  description: string
+  backend: Record<string, unknown>
+  frontend: Record<string, unknown>
+  project_defaults: Record<string, unknown>
+}
+
+type SystemConfig = {
+  active_profile: string
+  profiles: SystemProfileRow[]
+  env_files: {
+    backend: string
+    frontend: string
+  }
+  runtime: {
+    app_profile: string
+    annotation_backend: string
+    vllm_base_url: string
+    vllm_model_name: string
+    llm_request_timeout_seconds: number
+    llm_max_retries: number
+    llm_max_tokens: number
+  }
+  metadata: {
+    hot_reload_fields: string[]
+    restart_required_fields: string[]
+    note: string
+  }
+}
+
 const route = useRoute()
 const router = useRouter()
 
@@ -64,6 +114,30 @@ const labelsText = ref('')
 const labelsSaving = ref(false)
 const projectLabels = computed(() => parseLabels(labelsText.value))
 const canStartAnnotate = computed(() => !loading.value && projectLabels.value.length > 0)
+const settingsSaving = ref(false)
+const settingsMessage = ref('')
+const settingsChange = ref<ProjectSettingsChange | null>(null)
+const settingsMeta = ref<ProjectSettingsMeta | null>(null)
+const modelProfile = ref('auto')
+const llmBaseModel = ref('qwen3-vl-2b')
+const llmAutoOrderText = ref('2b, 4b, 8b')
+const llmMaxTokens = ref(2048)
+const samCheckpoint = ref('sam2_hiera_tiny')
+const samDevice = ref<'cpu' | 'cuda'>('cuda')
+const samMultimaskOutput = ref(false)
+const postprocessEnableClose = ref(true)
+const postprocessCloseKernel = ref(5)
+const postprocessEnableDpSimplify = ref(true)
+const postprocessEpsilonRatio = ref(0.002)
+const postprocessMinAreaRatio = ref(0.0005)
+const qualityEnabled = ref(true)
+const qualityOkThreshold = ref(0.8)
+const qualityUseLlmConfidence = ref(true)
+const qualityUseSamScore = ref(true)
+const qualityConsistencyCheck = ref(false)
+const evaluationDefaultSplit = ref<EvaluationSplit>('val')
+const evaluationIouThreshold = ref(0.5)
+const evaluationMaxSamplesText = ref('')
 
 const importFormat = ref<DatasetFormat>('yolo')
 const importFile = ref<File | null>(null)
@@ -77,6 +151,11 @@ const activeModelTag = ref('base')
 const qualityReviewThreshold = ref(0.6)
 const imageSortMode = ref<ImageSortMode>('newest')
 const splitUpdatingId = ref<number | null>(null)
+const systemConfig = ref<SystemConfig | null>(null)
+const systemLoading = ref(false)
+const profileActivating = ref('')
+const systemMessage = ref('')
+const viteProfile = String(import.meta.env.VITE_APP_PROFILE ?? 'unknown')
 
 const finetuneJobs = ref<FinetuneJobRow[]>([])
 const finetuneLog = ref('')
@@ -166,6 +245,18 @@ function parseLabels(text: string): string[] {
   return cleaned
 }
 
+function parseModelOrder(text: string): string[] {
+  return parseLabels(text)
+}
+
+function parseOptionalInt(text: string): number | null {
+  const trimmed = text.trim()
+  if (!trimmed) return null
+  const parsed = Number(trimmed)
+  if (!Number.isFinite(parsed) || parsed <= 0) return null
+  return Math.trunc(parsed)
+}
+
 function formatQuality(score: number | null): string {
   if (score == null) return 'unscored'
   return score.toFixed(3)
@@ -177,7 +268,21 @@ function needsReview(img: ImageRow): boolean {
 
 function reviewLabel(img: ImageRow): string {
   if (img.quality_score == null) return 'Unscored'
-  return needsReview(img) ? 'Needs Review' : 'OK'
+  if (needsReview(img)) return 'Needs Review'
+  if (img.quality_score >= qualityOkThreshold.value) return 'High Confidence'
+  return 'Watch'
+}
+
+function settingsStatusClass(): string {
+  return settingsChange.value?.reload_required ? 'settings-warn' : 'settings-success'
+}
+
+function profileDefaultBaseModel(profile: SystemProfileRow): string {
+  const llm = profile.project_defaults?.llm
+  if (llm && typeof llm === 'object' && 'base_model' in llm) {
+    return String((llm as Record<string, unknown>).base_model ?? '-')
+  }
+  return '-'
 }
 
 async function fetchImages() {
@@ -198,21 +303,52 @@ async function fetchProjectSettings() {
   if (!Number.isFinite(projectId.value) || projectId.value <= 0) return
   try {
     const resp = await api.get(`/api/projects/${projectId.value}/settings`)
-    activeModelTag.value = String(resp.data?.data?.active_model_tag ?? 'base')
+    const data = resp.data?.data ?? {}
+    activeModelTag.value = String(data.active_model_tag ?? 'base')
+    settingsMeta.value = (data._meta ?? null) as ProjectSettingsMeta | null
 
-    const labels = resp.data?.data?.labels
+    const labels = data.labels
     if (Array.isArray(labels)) {
       labelsText.value = labels.join(', ')
     }
 
-    const quality = resp.data?.data?.quality
+    modelProfile.value = String(data.model_profile ?? 'auto')
+
+    const llm = data.llm ?? {}
+    llmBaseModel.value = String(llm.base_model ?? 'qwen3-vl-2b')
+    llmAutoOrderText.value = Array.isArray(llm.auto_order) ? llm.auto_order.join(', ') : '2b, 4b, 8b'
+    llmMaxTokens.value = Number(llm.max_tokens ?? 2048)
+
+    const sam = data.sam ?? {}
+    samCheckpoint.value = String(sam.checkpoint ?? 'sam2_hiera_tiny')
+    samDevice.value = sam.device === 'cpu' ? 'cpu' : 'cuda'
+    samMultimaskOutput.value = Boolean(sam.multimask_output)
+
+    const postprocess = data.postprocess ?? {}
+    postprocessEnableClose.value = Boolean(postprocess.enable_close ?? true)
+    postprocessCloseKernel.value = Number(postprocess.close_kernel ?? 5)
+    postprocessEnableDpSimplify.value = Boolean(postprocess.enable_dp_simplify ?? true)
+    postprocessEpsilonRatio.value = Number(postprocess.epsilon_ratio ?? 0.002)
+    postprocessMinAreaRatio.value = Number(postprocess.min_area_ratio ?? 0.0005)
+
+    const quality = data.quality
     if (quality && typeof quality.threshold_review === 'number') {
       qualityReviewThreshold.value = Number(quality.threshold_review)
     }
+    qualityEnabled.value = Boolean(quality?.enable ?? true)
+    qualityOkThreshold.value = Number(quality?.threshold_ok ?? 0.8)
+    qualityUseLlmConfidence.value = Boolean(quality?.use_llm_confidence ?? true)
+    qualityUseSamScore.value = Boolean(quality?.use_sam_score ?? true)
+    qualityConsistencyCheck.value = Boolean(quality?.enable_consistency_check ?? false)
 
-    const evaluation = resp.data?.data?.evaluation
-    const candidateSplit = String(evaluation?.split ?? 'val')
-    evaluationSplit.value = candidateSplit === 'test' ? 'test' : 'val'
+    const evaluation = data.evaluation
+    const candidateDefaultSplit = String(evaluation?.split ?? 'val')
+    evaluationDefaultSplit.value =
+      candidateDefaultSplit === 'train' ? 'train' : candidateDefaultSplit === 'test' ? 'test' : 'val'
+    evaluationSplit.value = candidateDefaultSplit === 'test' ? 'test' : 'val'
+    evaluationIouThreshold.value = Number(evaluation?.iou_threshold ?? 0.5)
+    evaluationMaxSamplesText.value =
+      evaluation?.max_samples == null ? '' : String(evaluation.max_samples)
   } catch {
     // non-blocking
   }
@@ -313,10 +449,104 @@ async function importDataset() {
 
 async function saveLabels() {
   labelsSaving.value = true
+  await patchProjectSettings({ labels: parseLabels(labelsText.value) }, { source: 'labels' })
+  labelsSaving.value = false
+}
+
+async function patchProjectSettings(
+  patch: Record<string, unknown>,
+  options: { source: 'labels' | 'runtime' }
+) {
   error.value = ''
+  settingsMessage.value = ''
+  settingsChange.value = null
+  if (options.source === 'runtime') {
+    settingsSaving.value = true
+  }
+
   try {
-    const labels = parseLabels(labelsText.value)
-    await api.patch(`/api/projects/${projectId.value}/settings`, { labels })
+    const resp = await api.patch(`/api/projects/${projectId.value}/settings`, patch)
+    const payload = resp.data?.data ?? {}
+    settingsChange.value = (payload.change ?? null) as ProjectSettingsChange | null
+    settingsMessage.value = String(resp.data?.message ?? payload.change?.message ?? 'Saved settings.')
+    await fetchProjectSettings()
+    await fetchImages()
+  } catch (err: any) {
+    error.value = err?.response?.data?.message
+      ? String(err.response.data.message)
+      : err?.message
+        ? String(err.message)
+        : String(err)
+  } finally {
+    if (options.source === 'runtime') {
+      settingsSaving.value = false
+    }
+  }
+}
+
+async function saveRuntimeSettings() {
+  await patchProjectSettings(
+    {
+      model_profile: modelProfile.value,
+      llm: {
+        base_model: llmBaseModel.value.trim(),
+        auto_order: parseModelOrder(llmAutoOrderText.value),
+        max_tokens: Number(llmMaxTokens.value),
+      },
+      sam: {
+        checkpoint: samCheckpoint.value.trim(),
+        device: samDevice.value,
+        multimask_output: samMultimaskOutput.value,
+      },
+      postprocess: {
+        enable_close: postprocessEnableClose.value,
+        close_kernel: Number(postprocessCloseKernel.value),
+        enable_dp_simplify: postprocessEnableDpSimplify.value,
+        epsilon_ratio: Number(postprocessEpsilonRatio.value),
+        min_area_ratio: Number(postprocessMinAreaRatio.value),
+      },
+      quality: {
+        enable: qualityEnabled.value,
+        threshold_review: Number(qualityReviewThreshold.value),
+        threshold_ok: Number(qualityOkThreshold.value),
+        use_llm_confidence: qualityUseLlmConfidence.value,
+        use_sam_score: qualityUseSamScore.value,
+        enable_consistency_check: qualityConsistencyCheck.value,
+      },
+      evaluation: {
+        split: evaluationDefaultSplit.value,
+        iou_threshold: Number(evaluationIouThreshold.value),
+        max_samples: parseOptionalInt(evaluationMaxSamplesText.value),
+      },
+    },
+    { source: 'runtime' }
+  )
+}
+
+async function fetchSystemConfig() {
+  systemLoading.value = true
+  try {
+    const resp = await api.get('/api/system/config')
+    systemConfig.value = (resp.data?.data ?? null) as SystemConfig | null
+  } catch (err: any) {
+    error.value = err?.response?.data?.message
+      ? String(err.response.data.message)
+      : err?.message
+        ? String(err.message)
+        : String(err)
+  } finally {
+    systemLoading.value = false
+  }
+}
+
+async function activateSystemProfile(profileName: string) {
+  profileActivating.value = profileName
+  error.value = ''
+  systemMessage.value = ''
+  try {
+    const resp = await api.post('/api/system/model/activate', { profile: profileName })
+    systemMessage.value = String(resp.data?.message ?? 'Profile switched.')
+    await fetchSystemConfig()
     await fetchProjectSettings()
   } catch (err: any) {
     error.value = err?.response?.data?.message
@@ -325,7 +555,7 @@ async function saveLabels() {
         ? String(err.message)
         : String(err)
   } finally {
-    labelsSaving.value = false
+    profileActivating.value = ''
   }
 }
 
@@ -545,6 +775,7 @@ function openImage(imgId: number) {
 onMounted(() => {
   void fetchImages()
   void fetchProjectSettings()
+  void fetchSystemConfig()
   void fetchFinetuneJobs()
   void fetchEvaluationRuns()
 })
@@ -558,6 +789,7 @@ onBeforeUnmount(() => {
 watch(projectId, () => {
   void fetchImages()
   void fetchProjectSettings()
+  void fetchSystemConfig()
   void fetchFinetuneJobs()
   void fetchEvaluationRuns()
 })
@@ -624,6 +856,270 @@ watch(projectId, () => {
         <progress class="progress" :value="taskState.progress" max="100" />
         <div class="hint mono">{{ taskState.message }}</div>
       </div>
+    </div>
+
+    <div class="card">
+      <div class="row wrap-row">
+        <label class="label">M10</label>
+        <div class="settings-headline">
+          <div class="hint">
+            Runtime settings are persisted per project. Hot-reload fields affect new tasks immediately; reload-required fields need an explicit profile/model reload.
+          </div>
+          <div class="hint mono">
+            active-system=<span data-testid="active-system-profile">{{ settingsMeta?.active_system_profile ?? '-' }}</span>
+            · resolved-project=<span data-testid="resolved-project-profile">{{ settingsMeta?.resolved_project_profile ?? '-' }}</span>
+            · active-model=<span data-testid="project-active-model-tag">{{ activeModelTag }}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-grid">
+        <section class="settings-block">
+          <h2 class="settings-title">Model Routing</h2>
+          <div class="row wrap-row">
+            <label class="label">Profile</label>
+            <select v-model="modelProfile" class="input compact" data-testid="project-model-profile-select">
+              <option value="auto">auto</option>
+              <option value="fixed">fixed</option>
+              <option value="dev_low_resource">dev_low_resource</option>
+              <option value="test_real_stack">test_real_stack</option>
+              <option value="demo_prod">demo_prod</option>
+            </select>
+            <input
+              v-model="llmBaseModel"
+              class="input"
+              data-testid="project-llm-base-model-input"
+              placeholder="qwen3-vl-2b"
+            />
+          </div>
+          <div class="row wrap-row">
+            <label class="label">LLM</label>
+            <input
+              v-model="llmAutoOrderText"
+              class="input"
+              data-testid="project-llm-auto-order-input"
+              placeholder="2b, 4b, 8b"
+            />
+            <input
+              v-model.number="llmMaxTokens"
+              class="input compact"
+              data-testid="project-llm-max-tokens-input"
+              type="number"
+              min="64"
+              max="8192"
+            />
+          </div>
+          <div class="row wrap-row">
+            <label class="label">SAM</label>
+            <input
+              v-model="samCheckpoint"
+              class="input"
+              data-testid="project-sam-checkpoint-input"
+              placeholder="sam2_hiera_tiny"
+            />
+            <select v-model="samDevice" class="input compact" data-testid="project-sam-device-select">
+              <option value="cuda">cuda</option>
+              <option value="cpu">cpu</option>
+            </select>
+            <label class="checkbox">
+              <input v-model="samMultimaskOutput" data-testid="project-sam-multimask-checkbox" type="checkbox" />
+              <span>multimask</span>
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-block">
+          <h2 class="settings-title">Postprocess</h2>
+          <div class="row wrap-row">
+            <label class="checkbox">
+              <input v-model="postprocessEnableClose" data-testid="postprocess-enable-close" type="checkbox" />
+              <span>close</span>
+            </label>
+            <label class="checkbox">
+              <input
+                v-model="postprocessEnableDpSimplify"
+                data-testid="postprocess-enable-dp-simplify"
+                type="checkbox"
+              />
+              <span>dp simplify</span>
+            </label>
+          </div>
+          <div class="row wrap-row">
+            <label class="label">Kernel</label>
+            <input
+              v-model.number="postprocessCloseKernel"
+              class="input compact"
+              data-testid="postprocess-close-kernel-input"
+              type="number"
+              min="1"
+              max="31"
+            />
+            <input
+              v-model.number="postprocessEpsilonRatio"
+              class="input compact"
+              data-testid="postprocess-epsilon-ratio-input"
+              type="number"
+              step="0.001"
+              min="0"
+              max="1"
+            />
+            <input
+              v-model.number="postprocessMinAreaRatio"
+              class="input compact"
+              data-testid="postprocess-min-area-ratio-input"
+              type="number"
+              step="0.0001"
+              min="0"
+              max="1"
+            />
+          </div>
+        </section>
+
+        <section class="settings-block">
+          <h2 class="settings-title">Quality</h2>
+          <div class="row wrap-row">
+            <label class="checkbox">
+              <input v-model="qualityEnabled" data-testid="quality-enable-checkbox" type="checkbox" />
+              <span>enable scoring</span>
+            </label>
+            <label class="checkbox">
+              <input
+                v-model="qualityUseLlmConfidence"
+                data-testid="quality-use-llm-checkbox"
+                type="checkbox"
+              />
+              <span>use llm confidence</span>
+            </label>
+            <label class="checkbox">
+              <input v-model="qualityUseSamScore" data-testid="quality-use-sam-checkbox" type="checkbox" />
+              <span>use sam score</span>
+            </label>
+            <label class="checkbox">
+              <input
+                v-model="qualityConsistencyCheck"
+                data-testid="quality-consistency-checkbox"
+                type="checkbox"
+              />
+              <span>consistency check</span>
+            </label>
+          </div>
+          <div class="row wrap-row">
+            <label class="label">Threshold</label>
+            <input
+              v-model.number="qualityReviewThreshold"
+              class="input compact"
+              data-testid="quality-threshold-review-input"
+              type="number"
+              step="0.01"
+              min="0"
+              max="1"
+            />
+            <input
+              v-model.number="qualityOkThreshold"
+              class="input compact"
+              data-testid="quality-threshold-ok-input"
+              type="number"
+              step="0.01"
+              min="0"
+              max="1"
+            />
+          </div>
+        </section>
+
+        <section class="settings-block">
+          <h2 class="settings-title">Evaluation Defaults</h2>
+          <div class="row wrap-row">
+            <label class="label">Split</label>
+            <select v-model="evaluationDefaultSplit" class="input compact" data-testid="evaluation-default-split-select">
+              <option value="train">train</option>
+              <option value="val">val</option>
+              <option value="test">test</option>
+            </select>
+            <input
+              v-model.number="evaluationIouThreshold"
+              class="input compact"
+              data-testid="evaluation-iou-threshold-input"
+              type="number"
+              step="0.01"
+              min="0"
+              max="1"
+            />
+            <input
+              v-model="evaluationMaxSamplesText"
+              class="input compact"
+              data-testid="evaluation-max-samples-input"
+              placeholder="blank = all"
+            />
+          </div>
+        </section>
+      </div>
+
+      <div v-if="settingsMessage" class="hint" :class="settingsStatusClass()" data-testid="settings-save-status">
+        {{ settingsMessage }}
+      </div>
+      <div v-if="settingsChange?.reload_required_paths?.length" class="hint settings-warn" data-testid="settings-reload-paths">
+        Reload required:
+        <span class="mono">{{ settingsChange?.reload_required_paths.join(', ') }}</span>
+      </div>
+      <div class="row wrap-row">
+        <button
+          class="btn primary"
+          data-testid="project-settings-save-btn"
+          type="button"
+          :disabled="settingsSaving"
+          @click="saveRuntimeSettings"
+        >
+          {{ settingsSaving ? 'Saving...' : 'Save Runtime Settings' }}
+        </button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row wrap-row">
+        <label class="label">Profiles</label>
+        <div class="settings-headline">
+          <div class="hint">
+            One click switches between low-resource development, later real-stack integration, and demo/production-like defaults.
+          </div>
+          <div class="hint mono">
+            backend-active=<span data-testid="system-active-profile">{{ systemConfig?.active_profile ?? 'loading' }}</span>
+            · vite-now={{ viteProfile }}
+          </div>
+        </div>
+      </div>
+
+      <div v-if="systemLoading && !systemConfig" class="hint">Loading system profiles...</div>
+      <div v-else class="profile-grid">
+        <button
+          v-for="profile in systemConfig?.profiles ?? []"
+          :key="profile.name"
+          class="profile-card"
+          :class="{ active: systemConfig?.active_profile === profile.name }"
+          :data-testid="`system-profile-${profile.name}`"
+          type="button"
+          :disabled="profileActivating === profile.name"
+          @click="activateSystemProfile(profile.name)"
+        >
+          <div class="profile-title">{{ profile.name }}</div>
+          <div class="profile-desc">{{ profile.description }}</div>
+          <div class="hint mono">
+            backend={{ String(profile.backend.ANNOTATION_BACKEND ?? '-') }} · model={{ String(profile.backend.VLLM_MODEL_NAME ?? '-') }}
+          </div>
+          <div class="hint mono">project-base={{ profileDefaultBaseModel(profile) }}</div>
+        </button>
+      </div>
+
+      <div class="hint mono">
+        env-files: backend={{ systemConfig?.env_files.backend ?? '-' }} · frontend={{ systemConfig?.env_files.frontend ?? '-' }}
+      </div>
+      <div class="hint mono">
+        runtime:
+        <span data-testid="system-runtime-backend">{{ systemConfig?.runtime.annotation_backend ?? '-' }}</span>
+        ·
+        <span data-testid="system-runtime-model">{{ systemConfig?.runtime.vllm_model_name ?? '-' }}</span>
+        · timeout=<span data-testid="system-runtime-timeout">{{ systemConfig?.runtime.llm_request_timeout_seconds ?? '-' }}</span>
+      </div>
+      <div v-if="systemMessage" class="hint settings-warn" data-testid="system-profile-message">{{ systemMessage }}</div>
     </div>
 
     <div class="card">
@@ -871,6 +1367,42 @@ watch(projectId, () => {
   flex-wrap: wrap;
 }
 
+.settings-headline {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.settings-block {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-title {
+  margin: 0;
+  font-size: 14px;
+}
+
+.checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  opacity: 0.85;
+}
+
 .label {
   width: 70px;
   opacity: 0.75;
@@ -924,6 +1456,14 @@ watch(projectId, () => {
   color: rgba(56, 211, 159, 0.95);
 }
 
+.settings-success {
+  color: rgba(56, 211, 159, 0.95);
+}
+
+.settings-warn {
+  color: rgba(250, 204, 21, 0.95);
+}
+
 .finetune-status {
   color: rgba(125, 211, 252, 0.95);
 }
@@ -973,6 +1513,41 @@ watch(projectId, () => {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
   gap: 12px;
+}
+
+.profile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.profile-card {
+  text-align: left;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  padding: 12px;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.profile-card.active {
+  border-color: rgba(56, 211, 159, 0.5);
+  background: rgba(56, 211, 159, 0.08);
+}
+
+.profile-title {
+  font-weight: 650;
+}
+
+.profile-desc {
+  font-size: 13px;
+  opacity: 0.78;
+  min-height: 36px;
 }
 
 .item {
@@ -1114,6 +1689,10 @@ watch(projectId, () => {
   .row {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .settings-grid {
+    grid-template-columns: 1fr;
   }
 
   .input.compact {

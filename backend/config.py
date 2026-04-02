@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
@@ -9,12 +10,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="", env_file=(".env", ".env.active"), extra="ignore")
 
     root_dir: Path = Field(default_factory=lambda: Path(__file__).resolve().parent.parent)
     data_dir: Path | None = None
     database_url: str | None = None
 
+    app_profile: str = "dev_low_resource"
     cors_allow_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
     annotation_backend: Literal["stub", "openai_compatible"] = "stub"
     vllm_base_url: str = "http://127.0.0.1:8001"
@@ -78,6 +80,8 @@ def deep_merge(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
 
 @lru_cache
 def get_settings() -> Settings:
-    settings = Settings()
+    root_dir_env = os.getenv("ROOT_DIR")
+    root_dir = Path(root_dir_env).resolve() if root_dir_env else Path(__file__).resolve().parent.parent
+    settings = Settings(_env_file=(root_dir / ".env", root_dir / ".env.active"))
     settings.resolved_data_dir.mkdir(parents=True, exist_ok=True)
     return settings

@@ -1,0 +1,50 @@
+{
+  "name": "dev_low_resource",
+  "description": "Low-resource local development profile using stub backends and conservative defaults.",
+  "backend": {
+    "APP_PROFILE": "dev_low_resource",
+    "ANNOTATION_BACKEND": "stub",
+    "VLLM_BASE_URL": "http://127.0.0.1:8001",
+    "VLLM_MODEL_NAME": "qwen3-vl-2b",
+    "LLM_REQUEST_TIMEOUT_SECONDS": "15",
+    "LLM_MAX_RETRIES": "0",
+    "LLM_MAX_TOKENS": "1024",
+    "CORS_ALLOW_ORIGINS": "[\"http://localhost:5173\", \"http://127.0.0.1:5173\"]"
+  },
+  "frontend": {
+    "VITE_API_BASE_URL": "http://127.0.0.1:8000",
+    "VITE_APP_PROFILE": "dev_low_resource"
+  },
+  "project_defaults": {
+    "llm": {
+      "base_model": "qwen3-vl-2b",
+      "auto_order": ["2b", "4b", "8b"],
+      "max_tokens": 1024
+    },
+    "sam": {
+      "checkpoint": "sam2_hiera_tiny",
+      "device": "cpu",
+      "multimask_output": false
+    },
+    "postprocess": {
+      "enable_close": true,
+      "close_kernel": 3,
+      "enable_dp_simplify": true,
+      "epsilon_ratio": 0.006,
+      "min_area_ratio": 0.0005
+    },
+    "quality": {
+      "enable": true,
+      "threshold_review": 0.65,
+      "threshold_ok": 0.82,
+      "use_llm_confidence": true,
+      "use_sam_score": true,
+      "enable_consistency_check": false
+    },
+    "evaluation": {
+      "split": "val",
+      "iou_threshold": 0.5,
+      "max_samples": 50
+    }
+  }
+}

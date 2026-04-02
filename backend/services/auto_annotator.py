@@ -16,6 +16,7 @@ from backend.config import get_settings
 from backend.models.annotation import Annotation
 from backend.models.image import Image
 from backend.models.project import Project
+from backend.services.postprocess import apply_project_postprocess
 from backend.services.quality_service import refresh_image_quality
 from backend.services.project_settings import get_project_labels, load_project_settings
 from backend.services.sam_service import SAMService
@@ -308,15 +309,23 @@ def _attach_segmentation_shapes(project: Project, image: Image, annotations: lis
         return annotations
 
     sam = SAMService()
+    project_settings = load_project_settings(project)
+    sam_settings = project_settings.get("sam", {}) if isinstance(project_settings.get("sam"), dict) else {}
     enriched: list[GeneratedAnnotation] = []
     for annotation in annotations:
-        prediction = sam.predict_polygon(image, annotation.bbox)
+        prediction = sam.predict_polygon(
+            image,
+            annotation.bbox,
+            checkpoint=str(sam_settings.get("checkpoint") or "sam2_hiera_tiny"),
+            device=str(sam_settings.get("device") or "cuda"),
+            multimask_output=bool(sam_settings.get("multimask_output", False)),
+        )
         enriched.append(
             GeneratedAnnotation(
                 label=annotation.label,
                 bbox=annotation.bbox,
                 confidence=annotation.confidence,
-                polygon=prediction.polygon,
+                polygon=apply_project_postprocess(project, prediction.polygon),
                 mask_path=prediction.mask_path,
             )
         )

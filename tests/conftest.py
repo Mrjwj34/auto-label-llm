@@ -24,6 +24,8 @@ def client(tmp_path, monkeypatch):
 
     monkeypatch.setenv("DATA_DIR", str(data_dir))
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
+    monkeypatch.setenv("APP_PROFILE", "dev_low_resource")
+    monkeypatch.setenv("ANNOTATION_BACKEND", "stub")
 
     # reset caches so the app uses our temp paths
     get_settings.cache_clear()

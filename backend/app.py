@@ -17,6 +17,7 @@ from backend.routers.evaluations import router as evaluations_router
 from backend.routers.finetune import router as finetune_router
 from backend.routers.images import router as images_router
 from backend.routers.projects import router as projects_router
+from backend.routers.system import router as system_router
 from backend.routers.tasks import router as tasks_router
 
 
@@ -78,6 +79,7 @@ def create_app() -> FastAPI:
     app.include_router(annotations_router)
     app.include_router(evaluations_router)
     app.include_router(finetune_router)
+    app.include_router(system_router)
     app.include_router(tasks_router)
 
     return app

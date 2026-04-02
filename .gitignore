@@ -21,6 +21,8 @@ dist/
 /output/playwright/
 configs/app.local.yaml
 .env
+.env.active
+frontend/.env.local
 
 # OS
 Thumbs.db

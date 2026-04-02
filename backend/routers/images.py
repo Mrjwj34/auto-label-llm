@@ -20,7 +20,8 @@ from backend.models.annotation import Annotation
 from backend.models.image import Image
 from backend.models.project import Project
 from backend.services.auto_annotator import generate_auto_annotations, replace_auto_annotations
-from backend.services.project_settings import get_project_labels
+from backend.services.postprocess import apply_project_postprocess
+from backend.services.project_settings import get_project_labels, load_project_settings
 from backend.services.quality_service import refresh_image_quality
 from backend.services.sam_service import SAMService
 from backend.tasks.task_manager import TaskContext, get_task_manager
@@ -262,6 +263,16 @@ def _validate_project_label(project: Project | None, label: str | None) -> None:
         raise AppError(400, "label must be one of project's labels")
 
 
+def _project_sam_kwargs(project: Project | None) -> dict[str, Any]:
+    settings = load_project_settings(project)
+    sam_settings = settings.get("sam", {}) if isinstance(settings.get("sam"), dict) else {}
+    return {
+        "checkpoint": str(sam_settings.get("checkpoint") or "sam2_hiera_tiny"),
+        "device": str(sam_settings.get("device") or "cuda"),
+        "multimask_output": bool(sam_settings.get("multimask_output", False)),
+    }
+
+
 @router.get("/images/{image_id}/annotations")
 def list_annotations(image_id: int, db: Session = Depends(get_db)):
     image = db.get(Image, image_id)
@@ -284,8 +295,8 @@ def create_annotation(image_id: int, payload: AnnotationCreateIn, db: Session = 
     polygon: list[list[float]] | None = None
     mask_path: str | None = None
     if project is not None and project.task_type == "segmentation":
-        prediction = SAMService().predict_polygon(image, payload.bbox)
-        polygon = prediction.polygon
+        prediction = SAMService().predict_polygon(image, payload.bbox, **_project_sam_kwargs(project))
+        polygon = apply_project_postprocess(project, prediction.polygon)
         mask_path = prediction.mask_path
 
     ann = Annotation(
@@ -339,9 +350,9 @@ def predict_annotation(image_id: int, payload: ImagePredictIn, db: Session = Dep
                 is_confirmed=False,
             )
             if project.task_type == "segmentation" and payload.bbox is not None:
-                prediction = SAMService().predict_polygon(image, payload.bbox)
+                prediction = SAMService().predict_polygon(image, payload.bbox, **_project_sam_kwargs(project))
                 created.bbox = prediction.bbox
-                created.polygon = prediction.polygon
+                created.polygon = apply_project_postprocess(project, prediction.polygon)
                 created.mask_path = prediction.mask_path
             db.add(created)
             db.flush()
@@ -364,9 +375,9 @@ def predict_annotation(image_id: int, payload: ImagePredictIn, db: Session = Dep
         annotation.source = "corrected"
         annotation.is_confirmed = False
         if project.task_type == "segmentation" and payload.bbox is not None:
-            prediction = SAMService().predict_polygon(image, payload.bbox)
+            prediction = SAMService().predict_polygon(image, payload.bbox, **_project_sam_kwargs(project))
             annotation.bbox = prediction.bbox
-            annotation.polygon = prediction.polygon
+            annotation.polygon = apply_project_postprocess(project, prediction.polygon)
             annotation.mask_path = prediction.mask_path
         db.add(annotation)
         db.flush()
@@ -391,9 +402,10 @@ def predict_annotation(image_id: int, payload: ImagePredictIn, db: Session = Dep
         image=image,
         annotation=annotation,
         points=[{"x": point.x, "y": point.y, "label": point.label} for point in payload.points or []],
+        **_project_sam_kwargs(project),
     )
     annotation.bbox = prediction.bbox
-    annotation.polygon = prediction.polygon
+    annotation.polygon = apply_project_postprocess(project, prediction.polygon)
     annotation.mask_path = prediction.mask_path
     annotation.source = "corrected"
     annotation.is_confirmed = False

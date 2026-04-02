@@ -1,0 +1,50 @@
+{
+  "name": "demo_prod",
+  "description": "High-capacity demo profile for production-like model and timeout settings.",
+  "backend": {
+    "APP_PROFILE": "demo_prod",
+    "ANNOTATION_BACKEND": "openai_compatible",
+    "VLLM_BASE_URL": "http://127.0.0.1:8001",
+    "VLLM_MODEL_NAME": "qwen3-vl-8b",
+    "LLM_REQUEST_TIMEOUT_SECONDS": "45",
+    "LLM_MAX_RETRIES": "2",
+    "LLM_MAX_TOKENS": "3072",
+    "CORS_ALLOW_ORIGINS": "[\"http://localhost:5173\", \"http://127.0.0.1:5173\"]"
+  },
+  "frontend": {
+    "VITE_API_BASE_URL": "http://127.0.0.1:8000",
+    "VITE_APP_PROFILE": "demo_prod"
+  },
+  "project_defaults": {
+    "llm": {
+      "base_model": "qwen3-vl-8b",
+      "auto_order": ["8b", "4b", "2b"],
+      "max_tokens": 3072
+    },
+    "sam": {
+      "checkpoint": "sam2_hiera_large",
+      "device": "cuda",
+      "multimask_output": true
+    },
+    "postprocess": {
+      "enable_close": true,
+      "close_kernel": 7,
+      "enable_dp_simplify": true,
+      "epsilon_ratio": 0.002,
+      "min_area_ratio": 0.0003
+    },
+    "quality": {
+      "enable": true,
+      "threshold_review": 0.58,
+      "threshold_ok": 0.87,
+      "use_llm_confidence": true,
+      "use_sam_score": true,
+      "enable_consistency_check": true
+    },
+    "evaluation": {
+      "split": "test",
+      "iou_threshold": 0.6,
+      "max_samples": null
+    }
+  }
+}

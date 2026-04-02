@@ -25,7 +25,21 @@ def _clamp01(value: float) -> float:
     return max(0.0, min(1.0, float(value)))
 
 
-def _rounded_box_polygon(bbox: list[float]) -> list[list[float]]:
+def _checkpoint_detail(checkpoint: str) -> tuple[float, bool]:
+    name = checkpoint.casefold()
+    if "large" in name:
+        return 0.1, True
+    if "base" in name:
+        return 0.14, True
+    return 0.18, False
+
+
+def _rounded_box_polygon(
+    bbox: list[float],
+    *,
+    checkpoint: str,
+    multimask_output: bool,
+) -> list[list[float]]:
     xmin, ymin, xmax, ymax = bbox
     width = xmax - xmin
     height = ymax - ymin
@@ -33,8 +47,9 @@ def _rounded_box_polygon(bbox: list[float]) -> list[list[float]]:
     if width <= 0 or height <= 0:
         return []
 
-    dx = min(max(width * 0.18, 0.012), width / 3)
-    dy = min(max(height * 0.18, 0.012), height / 3)
+    curve_ratio, add_midpoints = _checkpoint_detail(checkpoint)
+    dx = min(max(width * curve_ratio, 0.012), width / 3)
+    dy = min(max(height * curve_ratio, 0.012), height / 3)
 
     points = [
         [xmin + dx, ymin],
@@ -46,6 +61,15 @@ def _rounded_box_polygon(bbox: list[float]) -> list[list[float]]:
         [xmin, ymax - dy],
         [xmin, ymin + dy],
     ]
+    if multimask_output or add_midpoints:
+        points.extend(
+            [
+                [(xmin + xmax) / 2, ymin],
+                [xmax, (ymin + ymax) / 2],
+                [(xmin + xmax) / 2, ymax],
+                [xmin, (ymin + ymax) / 2],
+            ]
+        )
 
     normalized: list[list[float]] = []
     seen: set[tuple[float, float]] = set()
@@ -143,12 +167,25 @@ class SAMService:
         # Real SAM integration can reuse this image-level cache contract later.
         self._current_image_id = image.id
 
-    def predict_polygon(self, image: Image, bbox: list[float]) -> SAMPrediction:
+    def predict_polygon(
+        self,
+        image: Image,
+        bbox: list[float],
+        *,
+        checkpoint: str = "sam2_hiera_tiny",
+        device: str = "cuda",
+        multimask_output: bool = False,
+    ) -> SAMPrediction:
         self.set_image(image)
         normalized_bbox = _canonicalize_bbox(bbox)
         return SAMPrediction(
             bbox=normalized_bbox,
-            polygon=_rounded_box_polygon(normalized_bbox),
+            polygon=_rounded_box_polygon(
+                normalized_bbox,
+                checkpoint=checkpoint,
+                multimask_output=multimask_output,
+            ),
+            provider=f"sam_stub:{checkpoint}:{device}",
         )
 
     def refine_annotation(
@@ -156,6 +193,10 @@ class SAMService:
         image: Image,
         annotation: Annotation,
         points: list[SAMPoint],
+        *,
+        checkpoint: str = "sam2_hiera_tiny",
+        device: str = "cuda",
+        multimask_output: bool = False,
     ) -> SAMPrediction:
         self.set_image(image)
         if annotation.bbox is None:
@@ -163,5 +204,10 @@ class SAMService:
         refined_bbox = _refine_bbox_with_points(annotation.bbox, points)
         return SAMPrediction(
             bbox=refined_bbox,
-            polygon=_rounded_box_polygon(refined_bbox),
+            polygon=_rounded_box_polygon(
+                refined_bbox,
+                checkpoint=checkpoint,
+                multimask_output=multimask_output,
+            ),
+            provider=f"sam_stub:{checkpoint}:{device}",
         )

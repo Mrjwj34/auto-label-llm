@@ -1,7 +1,9 @@
 param(
     [switch]$DryRun,
     [switch]$BackendOnly,
-    [switch]$FrontendOnly
+    [switch]$FrontendOnly,
+    [ValidateSet("dev_low_resource", "test_real_stack", "demo_prod")]
+    [string]$Profile
 )
 
 Set-StrictMode -Version Latest
@@ -67,6 +69,7 @@ $repoRoot = Split-Path -Parent $PSCommandPath
 $backendPython = Join-Path $repoRoot ".venv\Scripts\python.exe"
 $frontendDir = Join-Path $repoRoot "frontend"
 $frontendNodeModules = Join-Path $frontendDir "node_modules"
+$profileScript = Join-Path $repoRoot "scripts\use-profile.ps1"
 
 if (-not $FrontendOnly) {
     if (-not (Test-Path -LiteralPath $backendPython)) {
@@ -92,6 +95,9 @@ $frontendCommand = "npm run dev"
 if ($DryRun) {
     Write-Host "Temporary dev launcher preview" -ForegroundColor Cyan
     Write-Host "Repo root : $repoRoot"
+    if ($Profile) {
+        Write-Host "Profile   : $Profile"
+    }
     if (-not $FrontendOnly) {
         Write-Host "Backend   : $backendCommand"
     }
@@ -99,6 +105,13 @@ if ($DryRun) {
         Write-Host "Frontend  : $frontendCommand"
     }
     exit 0
+}
+
+if ($Profile) {
+    if (-not (Test-Path -LiteralPath $profileScript)) {
+        throw "Profile switch script not found: $profileScript"
+    }
+    & $profileScript -Profile $Profile
 }
 
 if (-not $FrontendOnly) {
