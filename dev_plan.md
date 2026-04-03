@@ -67,7 +67,7 @@
 | M9 | 评估与质量评分（MVP） | val/test 指标 + 线上风险排序 | ✅ | 85598a2 |
 | M10 | 配置中心、热更新与环境切换 | 项目配置真正驱动推理/后处理/评估，并支持一键切换测试/生产档位 | ✅ | 26efec0 |
 | M11 | 真实 LLM 推理与模型切换 | vLLM/OpenAI-compatible 真接入 + `active_model_tag` 真正生效 | ✅ | 233218f |
-| M12 | 真实 SAM3 与后处理 | 真实 mask/polygon + `set_image` 缓存 + OpenCV 后处理 | 🟡 | - |
+| M12 | 真实 SAM3 与后处理 | 真实 mask/polygon + `set_image` 缓存 + OpenCV 后处理 | 🟡 | e550e40 |
 | M13 | 任务基础设施升级 | Celery / Redis / WebSocket / GPU 锁替换当前轻量任务骨架 | ⬜ | - |
 | M14 | 真实 LoRA 微调闭环 | LLaMA-Factory 真训练 + LoRA 激活后真正参与推理 | ⬜ | - |
 | M15 | 评估系统增强与对比看板 | mask 指标、run 对比、失败案例分析、性能统计 | ⬜ | - |
@@ -381,3 +381,4 @@
 | 2026-04-03 | M10 | 🟡 → ✅ | 26efec0 | `.venv\Scripts\python.exe -m compileall backend`、`.venv\Scripts\python.exe -m pytest -q`、`npm run build`、`node output\playwright\m10\node\e2e-m10.cjs` | ✅ 通过 | 配置中心、热更新与环境切换人工验收通过，进入 M11 真实 LLM 推理与模型切换 |
 | 2026-04-03 | M11 | ⬜ → 🟡 | 233218f | `.venv\Scripts\python.exe -m compileall backend`、`.venv\Scripts\python.exe -m pytest -q`、`npm run build`、`node output\playwright\m11\node\e2e-m11.cjs` | ⏳ 待验收 | vLLM/OpenAI-compatible 路由封装 + `active_model_tag` 真正参与自动标注/评估 + 项目级模型切换入口 |
 | 2026-04-03 | M11 | 🟡 → ✅ | 233218f | `.venv\Scripts\python.exe -m compileall backend`、`.venv\Scripts\python.exe -m pytest -q`、`npm run build`、`node output\playwright\m11\node\e2e-m11.cjs` | ✅ 通过 | M11 人工验收通过，进入 M12 真实 SAM3 与后处理 |
+| 2026-04-03 | M12 | ⬜ → 🟡 | e550e40 | `.venv\Scripts\python.exe -m compileall backend tests`、`.venv\Scripts\python.exe -m pytest -q`、`cd frontend && npm run build`、`node` 临时 Playwright 浏览器回归 | ⏳ 待验收 | SAM3 优先 + stub 回退的真实 mask/polygon 管线、掩码落盘、OpenCV/降级后处理、导入导出与点纠错贯通 |
