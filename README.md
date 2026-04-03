@@ -85,6 +85,29 @@ npm run dev
 - `model_profile`、`llm.base_model`、`sam.*` 等字段会在保存后提示“需要显式重载/重启”
 - 系统 profile 切换按钮会同时更新 `.env.active` 和 `frontend/.env.local`
 
+### 模型路由与切换（M11）
+
+项目图片列表页现在额外支持：
+
+- 项目级 `active_model_tag` 显式切换，支持 `base` 和已完成的 `lora:{job_id}`
+- 自动标注和评估真正按照当前 `active_model_tag` 路由，而不是只把它当展示字段
+- 当 `ANNOTATION_BACKEND=openai_compatible` 时，优先走 vLLM / OpenAI-compatible 请求；失败后会清晰回退到 `stub`
+- 图片详情页会展示自动标注实例的运行时来源，例如 `stub · base -> qwen3-vl-4b · fallback`
+- 评估卡片会展示本次 run 的实际路由摘要，例如 `route=lora:6 -> lora:6`
+
+常用接口：
+
+```powershell
+POST /api/projects/{id}/models/activate
+POST /api/finetune/{id}/activate
+POST /api/projects/{id}/evaluate
+```
+
+其中：
+
+- `POST /api/projects/{id}/models/activate` 用于在 `base` 和 `lora:{job_id}` 之间切换当前项目的活动模型
+- `POST /api/finetune/{id}/activate` 仍然保留，用于从最近完成的 LoRA 任务快速激活对应 tag
+
 ---
 
 ## 约定
