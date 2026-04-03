@@ -21,6 +21,7 @@ from backend.models.finetune_job import FinetuneJob
 from backend.models.image import Image
 from backend.models.project import Project
 from backend.services.project_settings import get_project_labels, load_project_settings
+from backend.services.vllm_client import activate_project_model_tag
 
 
 PROMPT_TEMPLATES = [
@@ -50,18 +51,6 @@ def _store_path(path: Path) -> str:
         return path.resolve().relative_to(settings.root_dir).as_posix()
     except ValueError:
         return path.resolve().as_posix()
-
-
-def _read_project_config(project: Project) -> dict[str, Any]:
-    try:
-        loaded = json.loads(project.config) if project.config else {}
-        return loaded if isinstance(loaded, dict) else {}
-    except Exception:
-        return {}
-
-
-def _write_project_config(project: Project, config: dict[str, Any]) -> None:
-    project.config = json.dumps(config, ensure_ascii=False)
 
 
 def detect_vram_gb() -> float:
@@ -259,11 +248,7 @@ def activate_finetune_job(job_id: int, db: Session) -> None:
     if project is None:
         raise AppError(404, "project not found")
 
-    config = _read_project_config(project)
-    config["active_model_tag"] = f"lora:{job.id}"
-    _write_project_config(project, config)
-    db.add(project)
-    db.commit()
+    activate_project_model_tag(project, f"lora:{job.id}", db)
 
 
 def _run_finetune_job(job_id: int) -> None:

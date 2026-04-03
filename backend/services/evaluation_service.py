@@ -17,8 +17,9 @@ from backend.models.annotation import Annotation
 from backend.models.evaluation_run import EvaluationRun
 from backend.models.image import Image
 from backend.models.project import Project
-from backend.services.auto_annotator import GeneratedAnnotation, generate_auto_annotations
+from backend.services.auto_annotator import generate_auto_annotations
 from backend.services.project_settings import load_project_settings
+from backend.services.vllm_client import GeneratedAnnotation, resolve_inference_route
 
 
 _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="evaluation")
@@ -298,18 +299,24 @@ def create_evaluation_run(
     if not selected_image_ids:
         raise AppError(400, "no confirmed evaluation annotations available for the requested split")
 
-    resolved_model_tag = str(model_tag or project_settings.get("active_model_tag") or "base")
+    resolved_route = resolve_inference_route(
+        project,
+        requested_model_tag=model_tag,
+        db=db,
+        project_settings=project_settings,
+    )
     config = {
         "image_ids": selected_image_ids,
         "iou_threshold": resolved_iou_threshold,
         "max_samples": resolved_max_samples,
         "project_settings": project_settings,
+        "inference": resolved_route.to_dict(),
     }
     run = EvaluationRun(
         project_id=project_id,
         status="pending",
         split="custom" if image_ids else resolved_split,
-        model_tag=resolved_model_tag,
+        model_tag=resolved_route.effective_model_tag,
         config=json.dumps(config, ensure_ascii=False),
     )
     db.add(run)
@@ -336,6 +343,18 @@ def _run_evaluation(run_id: int) -> None:
             config = _load_json_dict(run.config)
             image_ids = [int(image_id) for image_id in config.get("image_ids", []) if int(image_id) > 0]
             iou_threshold = float(config.get("iou_threshold") or 0.5)
+            project_settings = (
+                config.get("project_settings", {})
+                if isinstance(config.get("project_settings"), dict)
+                else load_project_settings(project)
+            )
+            config_inference = config.get("inference", {}) if isinstance(config.get("inference"), dict) else {}
+            requested_model_tag = str(
+                config_inference.get("effective_model_tag")
+                or config_inference.get("requested_model_tag")
+                or run.model_tag
+                or "base"
+            )
 
             run.status = "running"
             run.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -362,7 +381,14 @@ def _run_evaluation(run_id: int) -> None:
                 if not gt_annotations:
                     continue
 
-                predictions = generate_auto_annotations(project, image).annotations
+                result = generate_auto_annotations(
+                    project,
+                    image,
+                    db=db,
+                    requested_model_tag=requested_model_tag,
+                    project_settings=project_settings,
+                )
+                predictions = result.annotations
                 matches, tp, fp, fn = _match_annotations(predictions, gt_annotations, iou_threshold=iou_threshold)
                 matched_prediction_indices = {int(match["prediction_index"]) for match in matches}
                 matched_ground_truth_indices = {int(match["ground_truth_index"]) for match in matches}
@@ -391,6 +417,7 @@ def _run_evaluation(run_id: int) -> None:
                             for idx, annotation in enumerate(gt_annotations)
                             if idx not in matched_ground_truth_indices
                         ],
+                        "inference": result.metadata(),
                     }
                 )
 
@@ -404,6 +431,7 @@ def _run_evaluation(run_id: int) -> None:
                 "split": run.split,
                 "model_tag": run.model_tag,
                 "generated_at": datetime.now(timezone.utc).isoformat(),
+                "inference": config_inference or per_image[0].get("inference"),
                 "metrics": metrics,
                 "images": per_image,
             }

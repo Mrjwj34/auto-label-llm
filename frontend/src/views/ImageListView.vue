@@ -148,6 +148,9 @@ const datasetMessage = ref('')
 const canImportDataset = computed(() => !!importFile.value && !importingDataset.value)
 
 const activeModelTag = ref('base')
+const modelActivationTag = ref('base')
+const modelActivating = ref(false)
+const modelActivationMessage = ref('')
 const qualityReviewThreshold = ref(0.6)
 const imageSortMode = ref<ImageSortMode>('newest')
 const splitUpdatingId = ref<number | null>(null)
@@ -180,6 +183,21 @@ const canStartEvaluation = computed(
 const latestEvaluationMetricsText = computed(() => {
   if (!latestEvaluationRun.value?.metrics) return 'No metrics available yet.'
   return JSON.stringify(latestEvaluationRun.value.metrics, null, 2)
+})
+const availableProjectModelTags = computed(() => {
+  const values = ['base', activeModelTag.value]
+  for (const job of finetuneJobs.value) {
+    if (job.status === 'done') values.push(job.model_tag)
+  }
+  return [...new Set(values.filter((value) => value.trim().length > 0))]
+})
+const latestEvaluationInferenceText = computed(() => {
+  const inference = latestEvaluationRun.value?.config?.inference
+  if (!inference || typeof inference !== 'object') return 'route=unavailable'
+  const payload = inference as Record<string, unknown>
+  const modelTag = String(payload.effective_model_tag ?? payload.requested_model_tag ?? latestEvaluationRun.value?.model_tag ?? '-')
+  const modelName = String(payload.request_model_name ?? payload.base_model_name ?? '-')
+  return `route=${modelTag} -> ${modelName}`
 })
 
 const taskState = reactive({
@@ -305,6 +323,7 @@ async function fetchProjectSettings() {
     const resp = await api.get(`/api/projects/${projectId.value}/settings`)
     const data = resp.data?.data ?? {}
     activeModelTag.value = String(data.active_model_tag ?? 'base')
+    modelActivationTag.value = activeModelTag.value
     settingsMeta.value = (data._meta ?? null) as ProjectSettingsMeta | null
 
     const labels = data.labels
@@ -523,6 +542,28 @@ async function saveRuntimeSettings() {
   )
 }
 
+async function activateProjectModel() {
+  modelActivating.value = true
+  error.value = ''
+  modelActivationMessage.value = ''
+  try {
+    const resp = await api.post(`/api/projects/${projectId.value}/models/activate`, {
+      model_tag: modelActivationTag.value,
+    })
+    modelActivationMessage.value = String(resp.data?.message ?? 'Model activated.')
+    await fetchProjectSettings()
+    await fetchFinetuneJobs()
+  } catch (err: any) {
+    error.value = err?.response?.data?.message
+      ? String(err.response.data.message)
+      : err?.message
+        ? String(err.message)
+        : String(err)
+  } finally {
+    modelActivating.value = false
+  }
+}
+
 async function fetchSystemConfig() {
   systemLoading.value = true
   try {
@@ -697,6 +738,7 @@ async function activateFinetune(jobId: number) {
   try {
     await api.post(`/api/finetune/${jobId}/activate`)
     finetuneMessage.value = `Activated model lora:${jobId}.`
+    modelActivationMessage.value = `Activated model lora:${jobId}.`
     await fetchProjectSettings()
     await fetchFinetuneJobs()
   } catch (err: any) {
@@ -877,6 +919,21 @@ watch(projectId, () => {
         <section class="settings-block">
           <h2 class="settings-title">Model Routing</h2>
           <div class="row wrap-row">
+            <label class="label">Active</label>
+            <select v-model="modelActivationTag" class="input compact" data-testid="project-model-activate-select">
+              <option v-for="tag in availableProjectModelTags" :key="tag" :value="tag">{{ tag }}</option>
+            </select>
+            <button
+              class="btn"
+              data-testid="project-model-activate-btn"
+              type="button"
+              :disabled="modelActivating"
+              @click="activateProjectModel"
+            >
+              {{ modelActivating ? 'Activating...' : 'Activate Model' }}
+            </button>
+          </div>
+          <div class="row wrap-row">
             <label class="label">Profile</label>
             <select v-model="modelProfile" class="input compact" data-testid="project-model-profile-select">
               <option value="auto">auto</option>
@@ -1056,6 +1113,9 @@ watch(projectId, () => {
 
       <div v-if="settingsMessage" class="hint" :class="settingsStatusClass()" data-testid="settings-save-status">
         {{ settingsMessage }}
+      </div>
+      <div v-if="modelActivationMessage" class="hint settings-success" data-testid="project-model-activate-message">
+        {{ modelActivationMessage }}
       </div>
       <div v-if="settingsChange?.reload_required_paths?.length" class="hint settings-warn" data-testid="settings-reload-paths">
         Reload required:
@@ -1245,6 +1305,7 @@ watch(projectId, () => {
         <div class="task-meta" data-testid="evaluation-status">
           run={{ latestEvaluationRun.id }} - {{ latestEvaluationRun.status }} - split={{ latestEvaluationRun.split }} - model={{ latestEvaluationRun.model_tag }}
         </div>
+        <div class="hint mono" data-testid="evaluation-inference-route">{{ latestEvaluationInferenceText }}</div>
         <div class="hint mono">report={{ latestEvaluationRun.report_path ?? '-' }}</div>
         <pre class="log-box" data-testid="evaluation-metrics">{{ latestEvaluationMetricsText }}</pre>
       </div>

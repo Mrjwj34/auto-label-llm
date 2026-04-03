@@ -25,6 +25,7 @@ type AnnotationRow = {
   confidence: number | null
   source: string
   is_confirmed: boolean
+  inference: Record<string, unknown> | null
 }
 
 type InteractionMode = 'bbox' | 'points'
@@ -134,6 +135,16 @@ function pointPx(point: CorrectionPoint) {
 
 function clamp01(n: number): number {
   return Math.max(0, Math.min(1, n))
+}
+
+function annotationRuntimeText(annotation: AnnotationRow): string {
+  const inference = annotation.inference
+  if (!inference || typeof inference !== 'object') return '-'
+  const provider = String(inference.provider ?? annotation.source ?? '-')
+  const modelTag = String(inference.effective_model_tag ?? inference.requested_model_tag ?? '-')
+  const modelName = String(inference.request_model_name ?? inference.base_model_name ?? '-')
+  const fallback = Boolean(inference.fallback_used)
+  return fallback ? `${provider} · ${modelTag} -> ${modelName} · fallback` : `${provider} · ${modelTag} -> ${modelName}`
 }
 
 function pointToNorm(ev: PointerEvent): { x: number; y: number } {
@@ -641,6 +652,7 @@ watch(
             <th>Bbox(0..1)</th>
             <th>Polygon</th>
             <th>Source</th>
+            <th>Runtime</th>
             <th>Confirmed</th>
             <th>Actions</th>
           </tr>
@@ -652,6 +664,7 @@ watch(
             <td class="mono">{{ a.bbox }}</td>
             <td class="mono">{{ a.polygon ? `${a.polygon.length} pts` : '-' }}</td>
             <td class="mono">{{ a.source }}</td>
+            <td class="mono">{{ annotationRuntimeText(a) }}</td>
             <td class="mono">{{ a.is_confirmed }}</td>
             <td class="row-actions" :class="{ 'row-active': activeAnnotationId === a.id }">
               <button

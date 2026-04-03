@@ -17,12 +17,13 @@ from backend.models.image import Image
 from backend.models.project import Project
 from backend.services.auto_annotator import generate_auto_annotations, replace_auto_annotations
 from backend.services.dataset_io import export_project_dataset, import_project_dataset
-from backend.services.project_settings import get_project_labels, load_stored_project_settings
+from backend.services.project_settings import get_project_labels, load_stored_project_settings, merge_project_settings
 from backend.services.settings_service import (
     build_project_settings_response,
     sanitize_project_settings_patch,
     settings_change_summary,
 )
+from backend.services.vllm_client import activate_project_model_tag, resolve_inference_route
 from backend.tasks.task_manager import TaskContext, get_task_manager
 from backend.utils.storage import delete_project_dirs, ensure_project_dirs
 
@@ -45,6 +46,10 @@ class ProjectOut(BaseModel):
 class ProjectAnnotateIn(BaseModel):
     image_ids: list[int] | None = None
     only_pending: bool = True
+
+
+class ProjectModelActivateIn(BaseModel):
+    model_tag: str = Field(min_length=1, max_length=200)
 
 
 def _project_to_dict(p: Project) -> dict[str, Any]:
@@ -108,6 +113,14 @@ def patch_project_settings(
         else:
             merged[key] = value
 
+    resolved_settings = merge_project_settings(merged, project=project)
+    resolve_inference_route(
+        project,
+        requested_model_tag=str(merged.get("active_model_tag") or resolved_settings.get("active_model_tag") or "base"),
+        db=db,
+        project_settings=resolved_settings,
+    )
+
     summary = settings_change_summary(cleaned_patch)
     project.config = json.dumps(merged, ensure_ascii=False)
     db.add(project)
@@ -118,6 +131,22 @@ def patch_project_settings(
             "change": summary,
         },
         message=summary["message"],
+    )
+
+
+@router.post("/projects/{project_id}/models/activate")
+def activate_project_model(project_id: int, payload: ProjectModelActivateIn, db: Session = Depends(get_db)):
+    project = db.get(Project, project_id)
+    if project is None:
+        raise AppError(404, "project not found")
+
+    activation = activate_project_model_tag(project, payload.model_tag, db)
+    return ok(
+        {
+            "settings": build_project_settings_response(project),
+            "activation": activation,
+        },
+        message=activation["message"],
     )
 
 
@@ -170,16 +199,14 @@ def annotate_project(project_id: int, payload: ProjectAnnotateIn, db: Session = 
                     task_db.add(img)
                     task_db.commit()
 
-                    result = generate_auto_annotations(task_project, img)
+                    result = generate_auto_annotations(task_project, img, db=task_db)
                     replace_auto_annotations(task_db, img, result)
                     img.status = "done"
                     task_db.add(img)
                     task_db.commit()
 
                     success_count += 1
-                    provider_text = f" via {result.provider}"
-                    if result.warning:
-                        provider_text += " (fallback)"
+                    provider_text = f" via {result.runtime_label()}"
             except Exception as exc:  # noqa: BLE001
                 failed_count += 1
                 provider_text = ""

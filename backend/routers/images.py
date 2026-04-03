@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import mimetypes
 from datetime import datetime
 from typing import Any, Literal
@@ -240,6 +241,7 @@ def get_image_file(image_id: int, db: Session = Depends(get_db)):
 
 
 def _annotation_to_dict(a: Annotation) -> dict[str, Any]:
+    inference_payload = _annotation_inference_payload(a)
     return {
         "id": a.id,
         "image_id": a.image_id,
@@ -252,7 +254,18 @@ def _annotation_to_dict(a: Annotation) -> dict[str, Any]:
         "source": a.source,
         "is_confirmed": bool(a.is_confirmed),
         "created_at": a.created_at,
+        "inference": inference_payload,
     }
+
+
+def _annotation_inference_payload(annotation: Annotation) -> dict[str, Any] | None:
+    if not annotation.extra:
+        return None
+    try:
+        payload = json.loads(annotation.extra)
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _validate_project_label(project: Project | None, label: str | None) -> None:
@@ -458,13 +471,12 @@ def annotate_image(image_id: int, db: Session = Depends(get_db)):
                 if task_project is None:
                     raise RuntimeError("project not found")
                 ctx.set_progress(40, "generating bbox")
-                result = generate_auto_annotations(task_project, img)
+                result = generate_auto_annotations(task_project, img, db=task_db)
                 replace_auto_annotations(task_db, img, result)
                 img.status = "done"
                 task_db.add(img)
                 task_db.commit()
-                suffix = " (fallback)" if result.warning else ""
-                ctx.set_progress(95, f"generated {len(result.annotations)} boxes via {result.provider}{suffix}")
+                ctx.set_progress(95, f"generated {len(result.annotations)} boxes via {result.runtime_label()}")
 
     task_id = manager.create(_job)
     return ok({"task_id": task_id})
