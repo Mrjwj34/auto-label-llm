@@ -3,6 +3,9 @@ from __future__ import annotations
 import re
 import shutil
 from pathlib import Path
+from uuid import uuid4
+
+from PIL import Image as PILImage
 
 from backend.config import get_settings
 
@@ -37,12 +40,29 @@ def save_project_image_bytes(project_id: int, image_id: int, original_filename: 
     dst = project_dir(project_id) / "images" / f"{image_id}_{safe_filename(original_filename)}"
     dst.write_bytes(content)
 
+    return _stored_path_for(dst)
+
+
+def save_project_mask_image(
+    project_id: int,
+    image_id: int,
+    mask_image: PILImage.Image,
+    *,
+    stem: str = "sam",
+) -> str:
+    ensure_project_dirs(project_id)
+    dst = project_dir(project_id) / "masks" / f"{image_id}_{safe_filename(stem)}_{uuid4().hex[:12]}.png"
+    mask_image.save(dst, format="PNG")
+    return _stored_path_for(dst)
+
+
+def _stored_path_for(path: Path) -> str:
     settings = get_settings()
     try:
-        rel = dst.relative_to(settings.root_dir)
+        rel = path.relative_to(settings.root_dir)
         return rel.as_posix()
     except ValueError:
-        return dst.as_posix()
+        return path.as_posix()
 
 
 def resolve_path(stored_path: str) -> Path:
@@ -51,4 +71,3 @@ def resolve_path(stored_path: str) -> Path:
     if p.is_absolute():
         return p
     return (settings.root_dir / p).resolve()
-

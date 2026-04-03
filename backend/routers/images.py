@@ -280,7 +280,7 @@ def _project_sam_kwargs(project: Project | None) -> dict[str, Any]:
     settings = load_project_settings(project)
     sam_settings = settings.get("sam", {}) if isinstance(settings.get("sam"), dict) else {}
     return {
-        "checkpoint": str(sam_settings.get("checkpoint") or "sam2_hiera_tiny"),
+        "checkpoint": str(sam_settings.get("checkpoint") or "sam3"),
         "device": str(sam_settings.get("device") or "cuda"),
         "multimask_output": bool(sam_settings.get("multimask_output", False)),
     }
@@ -307,15 +307,24 @@ def create_annotation(image_id: int, payload: AnnotationCreateIn, db: Session = 
 
     polygon: list[list[float]] | None = None
     mask_path: str | None = None
+    processed = None
     if project is not None and project.task_type == "segmentation":
         prediction = SAMService().predict_polygon(image, payload.bbox, **_project_sam_kwargs(project))
-        polygon = apply_project_postprocess(project, prediction.polygon)
-        mask_path = prediction.mask_path
+        processed = apply_project_postprocess(
+            project,
+            image,
+            mask=prediction.mask,
+            bbox=prediction.bbox,
+            provider=prediction.provider,
+            score=prediction.score,
+        )
+        polygon = processed.polygon
+        mask_path = processed.mask_path
 
     ann = Annotation(
         image_id=image_id,
         label=payload.label,
-        bbox=payload.bbox,
+        bbox=processed.bbox if processed is not None else payload.bbox,
         polygon=polygon,
         mask_path=mask_path,
         confidence=payload.confidence,
@@ -364,9 +373,17 @@ def predict_annotation(image_id: int, payload: ImagePredictIn, db: Session = Dep
             )
             if project.task_type == "segmentation" and payload.bbox is not None:
                 prediction = SAMService().predict_polygon(image, payload.bbox, **_project_sam_kwargs(project))
-                created.bbox = prediction.bbox
-                created.polygon = apply_project_postprocess(project, prediction.polygon)
-                created.mask_path = prediction.mask_path
+                processed = apply_project_postprocess(
+                    project,
+                    image,
+                    mask=prediction.mask,
+                    bbox=prediction.bbox,
+                    provider=prediction.provider,
+                    score=prediction.score,
+                )
+                created.bbox = processed.bbox or prediction.bbox or payload.bbox
+                created.polygon = processed.polygon
+                created.mask_path = processed.mask_path
             db.add(created)
             db.flush()
             refresh_image_quality(db, image)
@@ -389,9 +406,17 @@ def predict_annotation(image_id: int, payload: ImagePredictIn, db: Session = Dep
         annotation.is_confirmed = False
         if project.task_type == "segmentation" and payload.bbox is not None:
             prediction = SAMService().predict_polygon(image, payload.bbox, **_project_sam_kwargs(project))
-            annotation.bbox = prediction.bbox
-            annotation.polygon = apply_project_postprocess(project, prediction.polygon)
-            annotation.mask_path = prediction.mask_path
+            processed = apply_project_postprocess(
+                project,
+                image,
+                mask=prediction.mask,
+                bbox=prediction.bbox,
+                provider=prediction.provider,
+                score=prediction.score,
+            )
+            annotation.bbox = processed.bbox or prediction.bbox or payload.bbox
+            annotation.polygon = processed.polygon
+            annotation.mask_path = processed.mask_path
         db.add(annotation)
         db.flush()
         refresh_image_quality(db, image)
@@ -417,9 +442,17 @@ def predict_annotation(image_id: int, payload: ImagePredictIn, db: Session = Dep
         points=[{"x": point.x, "y": point.y, "label": point.label} for point in payload.points or []],
         **_project_sam_kwargs(project),
     )
-    annotation.bbox = prediction.bbox
-    annotation.polygon = apply_project_postprocess(project, prediction.polygon)
-    annotation.mask_path = prediction.mask_path
+    processed = apply_project_postprocess(
+        project,
+        image,
+        mask=prediction.mask,
+        bbox=prediction.bbox,
+        provider=prediction.provider,
+        score=prediction.score,
+    )
+    annotation.bbox = processed.bbox or prediction.bbox or annotation.bbox
+    annotation.polygon = processed.polygon
+    annotation.mask_path = processed.mask_path
     annotation.source = "corrected"
     annotation.is_confirmed = False
     db.add(annotation)

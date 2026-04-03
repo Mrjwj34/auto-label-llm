@@ -50,7 +50,7 @@
 | 层次 | 选型 |
 |---|---|
 | 多模态大模型 | Qwen3-VL（2B/4B/8B 按显存动态选择） |
-| 像素级分割 | SAM 2（facebook/sam2） |
+| 像素级分割 | SAM 3 / SAM 3.1（facebookresearch/sam3） |
 | 推理引擎 | vLLM |
 | 微调框架 | LLaMA-Factory |
 | 后端框架 | FastAPI |
@@ -100,7 +100,7 @@
 │  └──────┬──────┘         └──────────────┘         │
 │         │                                          │
 │  ┌──────▼──────┐                                  │
-│  │  SAM 2 单例  │                                  │
+│  │  SAM 3 单例  │                                  │
 │  │ +当前图缓存  │                                  │
 │  └──────┬──────┘                                  │
 │         │                                          │
@@ -209,7 +209,7 @@ CREATE INDEX idx_evaluation_runs_project_id ON evaluation_runs(project_id);
 |---|---|
 | Qwen3-VL 输出 | 归一化 0~1，`[xmin, ymin, xmax, ymax]` |
 | 数据库存储 | 归一化 0~1 |
-| SAM 2 输入 | 像素坐标（后端调用前乘以图片实际宽高转换） |
+| SAM 3 输入 | 像素坐标（后端调用前乘以图片实际宽高转换） |
 | 前端 Fabric.js | 画布坐标（前端渲染时乘以画布宽高转换） |
 | 导出 YOLO 格式 | 归一化 0~1，`[cx, cy, w, h]` |
 | 导出 COCO 格式 | 像素坐标，`[xmin, ymin, w, h]` |
@@ -225,7 +225,7 @@ data/
 │       └── exports/
 models/
 ├── qwen3-vl-{2B|4B|8B}/
-├── sam2/
+├── sam3/
 └── lora/
     └── {job_id}/
 logs/
@@ -257,7 +257,7 @@ logs/
 | 任务 |
 |---|
 | `services/vllm_client.py`：封装 Guided Decoding 调用，定义输出 JSON Schema |
-| `services/sam_service.py`：SAM 2 单例加载，封装 `set_image` / `predict` + “当前图” embedding 缓存 |
+| `services/sam_service.py`：SAM 3 单例加载，封装 `set_image` / `predict` + “当前图” embedding 缓存 |
 | `services/postprocess.py`：闭运算 + Douglas-Peucker 多边形逼近 |
 | `tasks/annotation_task.py`：串联三级流水线，结果写 DB |
 | `utils/gpu_lock.py`：GPU 互斥（Redis Lock 或单队列单并发），避免 FastAPI/Celery 多进程并发导致 OOM |
@@ -444,12 +444,11 @@ async def detect_objects(image_b64: str, labels: list[str]) -> dict:
 
 ---
 
-### 5.3 SAM 2 服务
+### 5.3 SAM 3 服务
 
 ```python
 # services/sam_service.py
-from sam2.build_sam import build_sam2
-from sam2.sam2_image_predictor import SAM2ImagePredictor
+from sam3 import build_sam3_image_model
 import numpy as np
 
 class SAMService:
@@ -462,9 +461,12 @@ class SAMService:
         return cls._instance
 
     def _init(self):
-        self.predictor = SAM2ImagePredictor(
-            build_sam2("sam2_hiera_large.yaml", "models/sam2/sam2_hiera_large.pt")
+        self.model = build_sam3_image_model(
+            checkpoint_path="models/sam3/sam3.1_multiplex.pt",
+            device="cuda",
+            enable_inst_interactivity=True,
         )
+        self.predictor = self.model.inst_interactive_predictor
         # 注意：predictor 同一时间只“记得”一张图的 embedding。
         # 因此这里的缓存策略是：同一张图连续纠错时复用 embedding（最小可用且不易出错）。
         self._current_image_id = None
@@ -477,13 +479,14 @@ class SAMService:
     def predict(self, image_id: int, image_np: np.ndarray,
                 bbox: list = None, points: list = None, point_labels: list = None) -> np.ndarray:
         self.set_image(image_id, image_np)
-        masks, _, _ = self.predictor.predict(
+        masks, scores, _ = self.predictor.predict(
             box=np.array(bbox) if bbox else None,
             point_coords=np.array(points) if points else None,
             point_labels=np.array(point_labels) if point_labels else None,
-            multimask_output=False
+            multimask_output=False,
+            normalize_coords=True,
         )
-        return masks[0]  # shape: (H, W), dtype: bool
+        return masks[0], scores[0]
 ```
 
 ---
@@ -809,7 +812,7 @@ project-root/
   "data": {
     "labels": ["crack", "scratch"],
     "model_profile": "auto",
-    "sam": { "checkpoint": "sam2_hiera_tiny", "device": "cuda" },
+    "sam": { "checkpoint": "sam3", "device": "cuda" },
     "postprocess": { "enable_close": true, "close_kernel": 5, "epsilon_ratio": 0.002 }
   }
 }
@@ -1146,7 +1149,7 @@ def test_get_nonexistent_image_annotations():
     "max_tokens": 2048
   },
   "sam": {
-    "checkpoint": "sam2_hiera_tiny",     // 6GB 推荐 tiny/base；32GB 可 large
+    "checkpoint": "sam3",                // 默认 symbolic alias；真实联调时可替换为本地 .pt 或启用 HF 下载
     "device": "cuda",                   // 'cuda'|'cpu'
     "multimask_output": false
   },
@@ -1177,8 +1180,8 @@ def test_get_nonexistent_image_annotations():
 
 支持四种策略即可覆盖你的需求：
 
-- `dev_6gb`：固定小模型（如 Qwen3-VL 2B + SAM2 tiny/base），必要时允许 SAM 跑 CPU。
-- `demo_32gb`：固定大模型（如 Qwen3-VL 8B + SAM2 large），追求效果。
+- `dev_6gb`：固定小模型（如 Qwen3-VL 2B + SAM3 stub / CPU），优先保证开发与联调可持续。
+- `demo_32gb`：固定大模型（如 Qwen3-VL 8B + SAM3.1 real stack），追求效果。
 - `fixed`：用户显式指定 `llm.base_model`、`sam.checkpoint`。
 - `auto`：后端探测 `torch.cuda.total_memory`，按 `auto_order` 选择“能跑得动的最大档”；选择结果写入日志并可回显到前端。
 

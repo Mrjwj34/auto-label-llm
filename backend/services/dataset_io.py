@@ -20,7 +20,8 @@ from backend.api import AppError
 from backend.models.annotation import Annotation
 from backend.models.image import Image
 from backend.models.project import Project
-from backend.services.project_settings import get_project_labels
+from backend.services.postprocess import apply_project_postprocess, save_polygon_mask
+from backend.services.project_settings import get_project_labels, load_project_settings
 from backend.services.quality_service import refresh_project_quality_scores
 from backend.services.sam_service import SAMService
 from backend.utils.storage import ensure_project_dirs, project_dir, resolve_path, safe_filename, save_project_image_bytes
@@ -350,6 +351,7 @@ def _import_yolo_dataset(
                 continue
             annotation = _parse_yolo_annotation_line(
                 stripped,
+                project=project,
                 labels_from_yaml=labels_from_yaml,
                 project_labels=existing_labels,
                 width=width,
@@ -375,6 +377,7 @@ def _import_yolo_dataset(
 def _parse_yolo_annotation_line(
     line: str,
     *,
+    project: Project,
     labels_from_yaml: list[str],
     project_labels: list[str],
     width: int,
@@ -417,13 +420,28 @@ def _parse_yolo_annotation_line(
 
     mask_path: str | None = None
     if task_type == "segmentation":
+        sam_settings = load_project_settings(project).get("sam", {})
+        sam_kwargs = {
+            "checkpoint": str(sam_settings.get("checkpoint") or "sam3"),
+            "device": str(sam_settings.get("device") or "cuda"),
+            "multimask_output": bool(sam_settings.get("multimask_output", False)),
+        }
         if polygon is None:
-            prediction = SAMService().predict_polygon(image, bbox)
-            bbox = prediction.bbox or bbox
-            polygon = prediction.polygon
-            mask_path = prediction.mask_path
+            prediction = SAMService().predict_polygon(image, bbox, **sam_kwargs)
+            processed = apply_project_postprocess(
+                project,
+                image,
+                mask=prediction.mask,
+                bbox=prediction.bbox or bbox,
+                provider=prediction.provider,
+                score=prediction.score,
+            )
+            bbox = processed.bbox or bbox
+            polygon = processed.polygon
+            mask_path = processed.mask_path
         else:
             bbox = _normalize_bbox(_bbox_from_polygon(polygon))
+            mask_path = save_polygon_mask(image, polygon, stem="import_polygon")
 
     return Annotation(
         image_id=image.id,
@@ -519,6 +537,7 @@ def _import_coco_dataset(
             for ann_payload in annotations_by_image.get(image_id, []):
                 annotation = _parse_coco_annotation(
                     ann_payload,
+                    project=project,
                     category_map=category_map,
                     width=width,
                     height=height,
@@ -543,6 +562,7 @@ def _import_coco_dataset(
 def _parse_coco_annotation(
     ann_payload: dict[str, Any],
     *,
+    project: Project,
     category_map: dict[int, str],
     width: int,
     height: int,
@@ -565,10 +585,27 @@ def _parse_coco_annotation(
     polygon = _coco_segmentation_to_polygon(ann_payload.get("segmentation"), width, height)
     mask_path: str | None = None
     if task_type == "segmentation" and polygon is None:
-        prediction = SAMService().predict_polygon(image, bbox)
-        bbox = prediction.bbox or bbox
-        polygon = prediction.polygon
-        mask_path = prediction.mask_path
+        sam_settings = load_project_settings(project).get("sam", {})
+        prediction = SAMService().predict_polygon(
+            image,
+            bbox,
+            checkpoint=str(sam_settings.get("checkpoint") or "sam3"),
+            device=str(sam_settings.get("device") or "cuda"),
+            multimask_output=bool(sam_settings.get("multimask_output", False)),
+        )
+        processed = apply_project_postprocess(
+            project,
+            image,
+            mask=prediction.mask,
+            bbox=prediction.bbox or bbox,
+            provider=prediction.provider,
+            score=prediction.score,
+        )
+        bbox = processed.bbox or bbox
+        polygon = processed.polygon
+        mask_path = processed.mask_path
+    elif task_type == "segmentation" and polygon is not None:
+        mask_path = save_polygon_mask(image, polygon, stem="import_polygon")
 
     return Annotation(
         image_id=image.id,

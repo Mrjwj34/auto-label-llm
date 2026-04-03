@@ -108,6 +108,35 @@ POST /api/projects/{id}/evaluate
 - `POST /api/projects/{id}/models/activate` 用于在 `base` 和 `lora:{job_id}` 之间切换当前项目的活动模型
 - `POST /api/finetune/{id}/activate` 仍然保留，用于从最近完成的 LoRA 任务快速激活对应 tag
 
+### 分割与 SAM3（M12）
+
+- 分割项目现在会真实生成二值 `mask PNG` 并同步产出 polygon，`mask_path` 会落盘到 `data/projects/{project_id}/masks/`
+- 默认开发档仍然优先走低算力友好的 `stub`，但 stub 已升级为“先生成真实 mask，再统一后处理/落盘”，因此本地联调、接口测试、浏览器纠错测试都能覆盖真实数据流
+- 项目默认 `sam.checkpoint` 已切到 `sam3` / `sam3.1` symbolic alias；`test_real_stack` / `demo_prod` 默认使用 `sam3.1`
+- 当前真实 SAM3 启用策略是“显式开启”：
+  - 提供本地 `.pt` checkpoint 路径给 `sam.checkpoint`
+  - 或在明确接受下载模型时设置 `SAM3_ALLOW_HF_DOWNLOAD=1`
+- 如果本机没有安装官方 `sam3` / `torch` 或没有可用 checkpoint，后端会自动回退到 stub，不会在开发过程中偷偷拉起大模型下载
+
+示例：
+
+```powershell
+$env:SAM3_ALLOW_HF_DOWNLOAD="1"
+python -m backend.main
+```
+
+或在项目设置里把 `sam.checkpoint` 改成本地权重路径，例如：
+
+```json
+{
+  "sam": {
+    "checkpoint": "models/sam3/sam3.1_multiplex.pt",
+    "device": "cuda",
+    "multimask_output": false
+  }
+}
+```
+
 ---
 
 ## 约定

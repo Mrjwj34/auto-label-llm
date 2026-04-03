@@ -145,17 +145,25 @@ def _attach_segmentation_shapes(
         prediction = sam.predict_polygon(
             image,
             annotation.bbox,
-            checkpoint=str(sam_settings.get("checkpoint") or "sam2_hiera_tiny"),
+            checkpoint=str(sam_settings.get("checkpoint") or "sam3"),
             device=str(sam_settings.get("device") or "cuda"),
             multimask_output=bool(sam_settings.get("multimask_output", False)),
+        )
+        processed = apply_project_postprocess(
+            project,
+            image,
+            mask=prediction.mask,
+            bbox=prediction.bbox,
+            provider=prediction.provider,
+            score=prediction.score,
         )
         enriched.append(
             GeneratedAnnotation(
                 label=annotation.label,
-                bbox=annotation.bbox,
+                bbox=processed.bbox or prediction.bbox or annotation.bbox,
                 confidence=annotation.confidence,
-                polygon=apply_project_postprocess(project, prediction.polygon),
-                mask_path=prediction.mask_path,
+                polygon=processed.polygon,
+                mask_path=processed.mask_path,
             )
         )
     return enriched

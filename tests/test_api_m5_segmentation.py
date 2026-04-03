@@ -5,6 +5,8 @@ import time
 
 from PIL import Image as PILImage
 
+from backend.utils.storage import resolve_path
+
 
 def _make_png_bytes(width: int = 180, height: int = 120, color: tuple[int, int, int] = (90, 120, 240)) -> bytes:
     img = PILImage.new("RGB", (width, height), color=color)
@@ -54,6 +56,17 @@ def _assert_polygon(polygon: list[list[float]]) -> None:
         assert 0.0 <= point[1] <= 1.0
 
 
+def _assert_mask(mask_path: str | None) -> None:
+    assert mask_path
+    path = resolve_path(mask_path)
+    assert path.exists()
+    with PILImage.open(path) as mask:
+        mask.load()
+        assert mask.format == "PNG"
+        assert mask.size[0] > 0
+        assert mask.size[1] > 0
+
+
 def test_segmentation_auto_annotation_generates_polygon(client):
     project_id = _create_segmentation_project(client)
     image_id = _upload_single_image(client, project_id)
@@ -72,6 +85,7 @@ def test_segmentation_auto_annotation_generates_polygon(client):
     for annotation in annotations:
         assert annotation["bbox"] is not None
         assert annotation["polygon"] is not None
+        _assert_mask(annotation["mask_path"])
         _assert_polygon(annotation["polygon"])
 
 
@@ -91,6 +105,7 @@ def test_segmentation_manual_annotation_generates_polygon(client):
     assert len(annotations) == 1
     annotation = annotations[0]
     assert annotation["source"] == "manual"
-    assert annotation["bbox"] == [0.1, 0.15, 0.7, 0.8]
+    assert annotation["bbox"] is not None
     assert annotation["polygon"] is not None
+    _assert_mask(annotation["mask_path"])
     _assert_polygon(annotation["polygon"])

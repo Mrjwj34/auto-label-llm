@@ -89,7 +89,7 @@ def test_project_settings_patch_returns_change_summary_and_metadata(client: Test
         f"/api/projects/{project_id}/settings",
         json={
             "quality": {"threshold_review": 0.72},
-            "sam": {"checkpoint": "sam2_hiera_large"},
+            "sam": {"checkpoint": "sam3.1"},
         },
     )
     assert patch.status_code == 200
@@ -104,7 +104,7 @@ def test_project_settings_patch_returns_change_summary_and_metadata(client: Test
     assert after.status_code == 200
     after_payload = after.json()["data"]
     assert after_payload["quality"]["threshold_review"] == 0.72
-    assert after_payload["sam"]["checkpoint"] == "sam2_hiera_large"
+    assert after_payload["sam"]["checkpoint"] == "sam3.1"
 
     invalid = client.patch(f"/api/projects/{project_id}/settings", json={"unknown": True})
     assert invalid.status_code == 400
@@ -143,7 +143,7 @@ def test_system_profile_activation_updates_runtime_and_auto_project_defaults(pro
     settings_payload = settings_resp.json()["data"]
     assert settings_payload["model_profile"] == "auto"
     assert settings_payload["llm"]["base_model"] == "qwen3-vl-4b"
-    assert settings_payload["sam"]["checkpoint"] == "sam2_hiera_base_plus"
+    assert settings_payload["sam"]["checkpoint"] == "sam3.1"
     assert settings_payload["_meta"]["resolved_project_profile"] == "test_real_stack"
 
     patch = client.patch(f"/api/projects/{project_id}/settings", json={"model_profile": "demo_prod"})
@@ -154,7 +154,7 @@ def test_system_profile_activation_updates_runtime_and_auto_project_defaults(pro
     assert demo_settings.status_code == 200
     demo_payload = demo_settings.json()["data"]
     assert demo_payload["llm"]["base_model"] == "qwen3-vl-8b"
-    assert demo_payload["sam"]["checkpoint"] == "sam2_hiera_large"
+    assert demo_payload["sam"]["checkpoint"] == "sam3.1"
     assert demo_payload["_meta"]["resolved_project_profile"] == "demo_prod"
 
 
@@ -167,7 +167,7 @@ def test_postprocess_and_quality_settings_affect_new_segmentation_predictions(cl
         json={
             "labels": ["crack"],
             "quality": {"enable": False},
-            "sam": {"checkpoint": "sam2_hiera_large", "multimask_output": True},
+            "sam": {"checkpoint": "sam3.1", "multimask_output": True},
             "postprocess": {"enable_close": False, "enable_dp_simplify": False},
         },
     )
@@ -196,7 +196,7 @@ def test_postprocess_and_quality_settings_affect_new_segmentation_predictions(cl
                 "use_llm_confidence": True,
                 "use_sam_score": True,
             },
-            "sam": {"checkpoint": "sam2_hiera_tiny", "multimask_output": False},
+            "sam": {"checkpoint": "sam3", "multimask_output": False},
             "postprocess": {"enable_close": True, "enable_dp_simplify": True, "epsilon_ratio": 0.2},
         },
     )

@@ -66,8 +66,8 @@
 | M8 | 微调流水线（可选） | 用确认数据导出 → 启动训练任务 | ✅ | d336852 |
 | M9 | 评估与质量评分（MVP） | val/test 指标 + 线上风险排序 | ✅ | 85598a2 |
 | M10 | 配置中心、热更新与环境切换 | 项目配置真正驱动推理/后处理/评估，并支持一键切换测试/生产档位 | ✅ | 26efec0 |
-| M11 | 真实 LLM 推理与模型切换 | vLLM/OpenAI-compatible 真接入 + `active_model_tag` 真正生效 | 🟡 | 233218f |
-| M12 | 真实 SAM2 与后处理 | 真实 mask/polygon + `set_image` 缓存 + OpenCV 后处理 | ⬜ | - |
+| M11 | 真实 LLM 推理与模型切换 | vLLM/OpenAI-compatible 真接入 + `active_model_tag` 真正生效 | ✅ | 233218f |
+| M12 | 真实 SAM3 与后处理 | 真实 mask/polygon + `set_image` 缓存 + OpenCV 后处理 | 🟡 | - |
 | M13 | 任务基础设施升级 | Celery / Redis / WebSocket / GPU 锁替换当前轻量任务骨架 | ⬜ | - |
 | M14 | 真实 LoRA 微调闭环 | LLaMA-Factory 真训练 + LoRA 激活后真正参与推理 | ⬜ | - |
 | M15 | 评估系统增强与对比看板 | mask 指标、run 对比、失败案例分析、性能统计 | ⬜ | - |
@@ -268,10 +268,10 @@
 
 ---
 
-### M12 — 真实 SAM2 与后处理
+### M12 — 真实 SAM3 与后处理
 
 **范围**
-- 引入真实 `SAM2ImagePredictor` 服务封装，支持 lazy load、checkpoint 选择、CPU/CUDA 设备切换。
+- 引入真实 `SAM3` 服务封装，支持 lazy load、checkpoint 选择、CPU/CUDA 设备切换，并保留低算力开发机上的 stub 自动回退。
 - 实现 `set_image` / 当前图 embedding 缓存，提升连续点选纠错与重复分割的响应速度。
 - 新增 `services/postprocess.py`，实现闭运算、边界裁剪、Douglas-Peucker 简化、多边形/Mask 落盘。
 - 统一分割项目的自动标注、点选纠错、导入与评估逻辑，确保都基于真实 mask/polygon。
@@ -281,7 +281,8 @@
 - 同一张图连续纠错可复用缓存，交互速度明显优于首次加载。
 
 **本地验证策略**
-- 在真实 SAM2 无法本地运行时，先用固定样例、后处理单测、接口集成测试和浏览器纠错测试替代。
+- 在真实 SAM3 无法本地运行时，先用固定样例、后处理单测、接口集成测试和浏览器纠错测试替代。
+- `dev_low_resource` 默认不主动下载大模型；只有在提供本地 `.pt` checkpoint，或显式设置 `SAM3_ALLOW_HF_DOWNLOAD=1` 时才尝试真实 SAM3。
 - 真实 checkpoint、CUDA/CPU 切换、embedding 缓存命中效果在 `test_real_stack` 环境集中验收。
 
 ---
@@ -379,3 +380,4 @@
 | 2026-04-02 | M10 | ⬜ → 🟡 | 26efec0 | `.venv\Scripts\python.exe -m compileall backend`、`.venv\Scripts\python.exe -m pytest -q`、`npm run build`、`node output\playwright\m10\node\e2e-m10.cjs` | ⏳ 待验收 | 项目设置面板 + 系统 profile 切换 + 热更新/显式重载提示 + 一键测试/生产档位切换 |
 | 2026-04-03 | M10 | 🟡 → ✅ | 26efec0 | `.venv\Scripts\python.exe -m compileall backend`、`.venv\Scripts\python.exe -m pytest -q`、`npm run build`、`node output\playwright\m10\node\e2e-m10.cjs` | ✅ 通过 | 配置中心、热更新与环境切换人工验收通过，进入 M11 真实 LLM 推理与模型切换 |
 | 2026-04-03 | M11 | ⬜ → 🟡 | 233218f | `.venv\Scripts\python.exe -m compileall backend`、`.venv\Scripts\python.exe -m pytest -q`、`npm run build`、`node output\playwright\m11\node\e2e-m11.cjs` | ⏳ 待验收 | vLLM/OpenAI-compatible 路由封装 + `active_model_tag` 真正参与自动标注/评估 + 项目级模型切换入口 |
+| 2026-04-03 | M11 | 🟡 → ✅ | 233218f | `.venv\Scripts\python.exe -m compileall backend`、`.venv\Scripts\python.exe -m pytest -q`、`npm run build`、`node output\playwright\m11\node\e2e-m11.cjs` | ✅ 通过 | M11 人工验收通过，进入 M12 真实 SAM3 与后处理 |

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -18,10 +19,17 @@ from backend.database import get_engine, get_session_factory
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
-    data_dir = tmp_path / "data"
+    root_dir = tmp_path / "runtime-root"
+    data_dir = root_dir / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     db_path = data_dir / "test.db"
+    profiles_dir = root_dir / "configs" / "profiles"
+    profiles_dir.mkdir(parents=True, exist_ok=True)
+    for source in (ROOT_DIR / "configs" / "profiles").glob("*.json"):
+        shutil.copy2(source, profiles_dir / source.name)
+    (root_dir / "frontend").mkdir(parents=True, exist_ok=True)
 
+    monkeypatch.setenv("ROOT_DIR", str(root_dir))
     monkeypatch.setenv("DATA_DIR", str(data_dir))
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
     monkeypatch.setenv("APP_PROFILE", "dev_low_resource")

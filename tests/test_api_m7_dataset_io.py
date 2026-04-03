@@ -96,7 +96,19 @@ def test_export_coco_contains_split_json_and_segmentation(client):
         json={"annotation_id": None, "label": "crack", "bbox": [0.2, 0.25, 0.6, 0.7]},
     )
     assert create.status_code == 200
-    _confirm_annotation(client, create.json()["data"]["annotation_id"])
+    annotation_id = create.json()["data"]["annotation_id"]
+    _confirm_annotation(client, annotation_id)
+
+    annotations_resp = client.get(f"/api/images/{image_id}/annotations")
+    assert annotations_resp.status_code == 200
+    stored_annotation = next(row for row in annotations_resp.json()["data"] if row["id"] == annotation_id)
+    xmin, ymin, xmax, ymax = stored_annotation["bbox"]
+    expected_bbox = [
+        round(xmin * 200, 2),
+        round(ymin * 120, 2),
+        round((xmax - xmin) * 200, 2),
+        round((ymax - ymin) * 120, 2),
+    ]
 
     export = client.get(f"/api/projects/{project_id}/export", params={"format": "coco"})
     assert export.status_code == 200
@@ -112,7 +124,7 @@ def test_export_coco_contains_split_json_and_segmentation(client):
     assert len(payload["images"]) == 1
     assert len(payload["annotations"]) == 1
     annotation = payload["annotations"][0]
-    assert annotation["bbox"] == [40.0, 30.0, 80.0, 54.0]
+    assert annotation["bbox"] == expected_bbox
     assert annotation["segmentation"]
 
 

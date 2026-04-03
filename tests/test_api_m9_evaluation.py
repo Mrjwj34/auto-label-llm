@@ -6,6 +6,8 @@ from pathlib import Path
 
 from PIL import Image as PILImage
 
+from backend.utils.storage import resolve_path
+
 
 def _make_png_bytes(
     width: int = 128,
@@ -130,7 +132,7 @@ def test_evaluation_run_generates_report_and_perfect_metrics_from_confirmed_auto
     assert set(metrics["per_label"]) <= {"crack", "scratch"}
 
     assert final_run["report_path"]
-    report_path = Path(final_run["report_path"])
+    report_path = resolve_path(final_run["report_path"])
     assert report_path.exists()
 
     report = client.get(f"/api/evaluations/{run_id}/report")

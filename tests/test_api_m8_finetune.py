@@ -7,6 +7,8 @@ from pathlib import Path
 
 from PIL import Image as PILImage
 
+from backend.utils.storage import resolve_path
+
 
 def _make_png_bytes(width: int = 120, height: int = 80, color: tuple[int, int, int] = (64, 140, 220)) -> bytes:
     img = PILImage.new("RGB", (width, height), color=color)
@@ -78,7 +80,7 @@ def test_finetune_job_runs_exports_dataset_and_can_activate(client):
     assert final_status["log_path"]
     assert final_status["config"]["dataset"] == f"project_{project_id}_train"
 
-    dataset_path = Path(final_status["dataset_path"])
+    dataset_path = resolve_path(final_status["dataset_path"])
     assert dataset_path.exists()
     sample = json.loads(dataset_path.read_text(encoding="utf-8").splitlines()[0])
     assert sample["messages"][0]["role"] == "user"
@@ -86,7 +88,7 @@ def test_finetune_job_runs_exports_dataset_and_can_activate(client):
     assistant_payload = json.loads(sample["messages"][1]["content"])
     assert assistant_payload["objects"][0]["label"] == "crack"
 
-    lora_dir = Path(final_status["lora_path"])
+    lora_dir = resolve_path(final_status["lora_path"])
     assert lora_dir.exists()
     assert (lora_dir / "adapter_config.json").exists()
 

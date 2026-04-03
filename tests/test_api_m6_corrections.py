@@ -4,6 +4,8 @@ import io
 
 from PIL import Image as PILImage
 
+from backend.utils.storage import resolve_path
+
 
 def _make_png_bytes(width: int = 200, height: int = 120, color: tuple[int, int, int] = (120, 80, 240)) -> bytes:
     img = PILImage.new("RGB", (width, height), color=color)
@@ -35,6 +37,17 @@ def _list_annotations(client, image_id: int) -> list[dict]:
     resp = client.get(f"/api/images/{image_id}/annotations")
     assert resp.status_code == 200
     return resp.json()["data"]
+
+
+def _assert_mask(mask_path: str | None) -> None:
+    assert mask_path
+    path = resolve_path(mask_path)
+    assert path.exists()
+    with PILImage.open(path) as mask:
+        mask.load()
+        assert mask.format == "PNG"
+        assert mask.size[0] > 0
+        assert mask.size[1] > 0
 
 
 def test_predict_bbox_creates_corrected_annotation(client):
@@ -90,7 +103,9 @@ def test_segmentation_point_correction_updates_polygon_and_resets_confirmation(c
     annotation_id = create.json()["data"]["annotation_id"]
     original_bbox = create.json()["data"]["bbox"]
     original_polygon = create.json()["data"]["polygon"]
+    original_mask_path = create.json()["data"]["mask_path"]
     assert original_polygon is not None
+    _assert_mask(original_mask_path)
 
     confirm = client.patch(f"/api/annotations/{annotation_id}/confirm")
     assert confirm.status_code == 200
@@ -111,6 +126,8 @@ def test_segmentation_point_correction_updates_polygon_and_resets_confirmation(c
     assert updated_payload["polygon"] is not None
     assert updated_payload["bbox"] != original_bbox
     assert updated_payload["polygon"] != original_polygon
+    assert updated_payload["mask_path"] != original_mask_path
+    _assert_mask(updated_payload["mask_path"])
 
     annotations = _list_annotations(client, image_id)
     assert len(annotations) == 1
@@ -118,6 +135,7 @@ def test_segmentation_point_correction_updates_polygon_and_resets_confirmation(c
     assert annotation["source"] == "corrected"
     assert annotation["is_confirmed"] is False
     assert annotation["polygon"] == updated_payload["polygon"]
+    assert annotation["mask_path"] == updated_payload["mask_path"]
 
 
 def test_point_correction_rejects_detection_project(client):
