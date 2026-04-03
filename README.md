@@ -37,6 +37,14 @@ python -m backend.main
 .\scripts\use-profile.ps1 -Profile demo_prod
 ```
 
+Linux 也可以直接用跨平台脚本：
+
+```bash
+python3 scripts/use_profile.py --profile dev_low_resource
+python3 scripts/use_profile.py --profile test_real_stack
+python3 scripts/use_profile.py --profile demo_prod
+```
+
 - 也可以在启动时一起切换：
 
 ```powershell
@@ -47,6 +55,36 @@ python -m backend.main
 - `dev_low_resource`：低算力开发档，默认 `stub/mock/CPU` 友好
 - `test_real_stack`：后续统一联调档，面向真实 vLLM / SAM / 训练环境
 - `demo_prod`：答辩/演示档，使用更激进的模型与超时配置
+
+### Linux 一键补环境（真实栈）
+
+如果你要在 Linux 上直接补齐真实依赖，可以用：
+
+```bash
+bash scripts/bootstrap-linux.sh --profile test_real_stack --download-sam3-checkpoint
+```
+
+这个脚本会：
+
+- 创建或复用 `.venv`
+- 安装 `requirements.txt`
+- 生成 `.env.active` 与 `frontend/.env.local`
+- 安装前端依赖
+- 在 `test_real_stack` / `demo_prod` 下默认补齐 `torch`、官方 `sam3`、`huggingface_hub`、`vllm`
+- 可选把 `SAM3` checkpoint 下载到 `models/sam3/`
+
+可用参数：
+
+```bash
+bash scripts/bootstrap-linux.sh --profile dev_low_resource --skip-vllm --skip-sam3
+bash scripts/bootstrap-linux.sh --profile demo_prod --with-vllm --with-sam3
+```
+
+说明：
+
+- Linux 是真实栈主路径；Windows 上如果缺少真实依赖，允许继续走 `dev_low_resource` / `stub` 回退
+- `scripts/bootstrap-linux.sh` 默认只负责“补环境”，不直接托管所有服务进程
+- `scripts/use-profile.sh` 是 Linux 下的 profile 切换包装脚本，本质上调用同一个 `scripts/use_profile.py`
 
 ### 自动标注（M4）
 
@@ -95,6 +133,22 @@ npm run dev
 - 图片详情页会展示自动标注实例的运行时来源，例如 `stub · base -> qwen3-vl-4b · fallback`
 - 评估卡片会展示本次 run 的实际路由摘要，例如 `route=lora:6 -> lora:6`
 
+当前实现的真实状态：
+
+- M11 不是直连 OpenAI 云 API，而是请求 `VLLM_BASE_URL/v1/chat/completions` 这类 OpenAI-compatible 接口；默认目标是本地/私有 vLLM 服务
+- `lora:{job_id}` 当前已经能真实参与项目配置、评估记录和请求路由，但还没有做 vLLM 侧 LoRA adapter 的真实挂载/热切换
+- 换句话说：LoRA 现在是“路由标签和产物选择真实生效”，不是“vLLM 推理时已经真正吃到了 adapter 权重”
+- 真正的 LoRA 训练产物接入 vLLM 推理时，将在后续 M14 落地
+
+Linux 下可以直接用辅助脚本把真实模型暴露成当前项目配置里的逻辑名称：
+
+```bash
+VLLM_MODEL_SOURCE=Qwen/Qwen2.5-VL-7B-Instruct \
+bash scripts/run-vllm-linux.sh --served-model-name qwen3-vl-4b
+```
+
+这样后端仍然请求 `qwen3-vl-4b`，但 vLLM 实际加载的是你指定的真实 Hugging Face 模型或本地模型目录。
+
 常用接口：
 
 ```powershell
@@ -116,6 +170,9 @@ POST /api/projects/{id}/evaluate
 - 当前真实 SAM3 启用策略是“显式开启”：
   - 提供本地 `.pt` checkpoint 路径给 `sam.checkpoint`
   - 或在明确接受下载模型时设置 `SAM3_ALLOW_HF_DOWNLOAD=1`
+- 现在额外支持两条更直接的真实路径：
+  - 设置 `SAM3_CHECKPOINT_PATH=/abs/path/to/xxx.pt`
+  - 直接把权重放进 `models/sam3/`，后端会自动按 `sam3` / `sam3.1` alias 优先匹配
 - 如果本机没有安装官方 `sam3` / `torch` 或没有可用 checkpoint，后端会自动回退到 stub，不会在开发过程中偷偷拉起大模型下载
 
 示例：

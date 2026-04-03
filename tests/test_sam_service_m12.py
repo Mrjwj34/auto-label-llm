@@ -145,3 +145,65 @@ def test_postprocess_fallback_without_opencv(monkeypatch, tmp_path):
     assert processed.polygon is not None
     assert len(processed.polygon) >= 4
     assert processed.mask_path is not None
+
+
+def test_sam_service_prefers_env_checkpoint_override(monkeypatch, tmp_path):
+    root_dir = tmp_path / "runtime-root"
+    checkpoint_path = root_dir / "custom" / "sam3.1_multiplex_large.pt"
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint_path.write_bytes(b"stub checkpoint")
+
+    monkeypatch.setenv("ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DATA_DIR", str(root_dir / "data"))
+    monkeypatch.setenv("SAM3_CHECKPOINT_PATH", "custom/sam3.1_multiplex_large.pt")
+    monkeypatch.delenv("SAM3_ALLOW_HF_DOWNLOAD", raising=False)
+    get_settings.cache_clear()
+    SAMService._instance = None
+
+    service = SAMService()
+    resolved_path, label = service._resolve_real_checkpoint("sam3")
+
+    assert Path(resolved_path) == checkpoint_path.resolve()
+    assert label == checkpoint_path.name
+
+
+def test_sam_service_discovers_local_checkpoint_by_alias(monkeypatch, tmp_path):
+    root_dir = tmp_path / "runtime-root"
+    model_dir = root_dir / "models" / "sam3"
+    model_dir.mkdir(parents=True, exist_ok=True)
+    first_checkpoint = model_dir / "sam3_base.pt"
+    preferred_checkpoint = model_dir / "sam3.1_multiplex_large.pt"
+    first_checkpoint.write_bytes(b"first")
+    preferred_checkpoint.write_bytes(b"preferred")
+
+    monkeypatch.setenv("ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DATA_DIR", str(root_dir / "data"))
+    monkeypatch.delenv("SAM3_CHECKPOINT_PATH", raising=False)
+    monkeypatch.delenv("SAM3_ALLOW_HF_DOWNLOAD", raising=False)
+    get_settings.cache_clear()
+    SAMService._instance = None
+
+    service = SAMService()
+    resolved_path, label = service._resolve_real_checkpoint("sam3.1")
+
+    assert Path(resolved_path) == preferred_checkpoint.resolve()
+    assert label == preferred_checkpoint.name
+
+
+def test_sam_service_rejects_missing_env_checkpoint_override(monkeypatch, tmp_path):
+    root_dir = tmp_path / "runtime-root"
+
+    monkeypatch.setenv("ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DATA_DIR", str(root_dir / "data"))
+    monkeypatch.setenv("SAM3_CHECKPOINT_PATH", "models/sam3/missing.pt")
+    monkeypatch.delenv("SAM3_ALLOW_HF_DOWNLOAD", raising=False)
+    get_settings.cache_clear()
+    SAMService._instance = None
+
+    service = SAMService()
+
+    try:
+        service._resolve_real_checkpoint("sam3")
+        assert False, "expected a RuntimeError for missing SAM3_CHECKPOINT_PATH"
+    except RuntimeError as exc:
+        assert "SAM3_CHECKPOINT_PATH" in str(exc)

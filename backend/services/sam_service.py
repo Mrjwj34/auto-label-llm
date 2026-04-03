@@ -10,6 +10,7 @@ from typing import Any, TypedDict
 from PIL import Image as PILImage
 from PIL import ImageDraw
 
+from backend.config import get_settings
 from backend.models.annotation import Annotation
 from backend.models.image import Image
 from backend.utils.storage import resolve_path
@@ -269,6 +270,10 @@ class SAMService:
                 raise RuntimeError(f"SAM3 checkpoint not found: {checkpoint_path}")
             return checkpoint_path.as_posix(), checkpoint_path.name
 
+        local_checkpoint = self._find_local_checkpoint(raw)
+        if local_checkpoint is not None:
+            return local_checkpoint.as_posix(), local_checkpoint.name
+
         if os.getenv("SAM3_ALLOW_HF_DOWNLOAD", "").strip() != "1":
             raise RuntimeError(
                 "SAM3 real runtime is disabled until a local .pt checkpoint is configured "
@@ -380,6 +385,44 @@ class SAMService:
         if not value:
             return False
         return value.endswith(".pt") or value.endswith(".pth") or "/" in value or "\\" in value
+
+    def _find_local_checkpoint(self, checkpoint: str) -> Path | None:
+        raw = str(checkpoint or "").strip()
+        env_override = os.getenv("SAM3_CHECKPOINT_PATH", "").strip()
+        if env_override:
+            env_path = resolve_path(env_override)
+            if not env_path.exists():
+                raise RuntimeError(f"SAM3 checkpoint from SAM3_CHECKPOINT_PATH was not found: {env_path}")
+            if env_path.is_dir():
+                raise RuntimeError(f"SAM3_CHECKPOINT_PATH must point to a checkpoint file, got directory: {env_path}")
+            return env_path
+
+        root = get_settings().root_dir.resolve()
+        model_dir = (root / "models" / "sam3").resolve()
+        if not model_dir.exists():
+            return None
+
+        candidates = sorted(
+            [path for path in model_dir.rglob("*") if path.is_file() and path.suffix.lower() in (".pt", ".pth")],
+            key=lambda path: path.name.lower(),
+        )
+        if not candidates:
+            return None
+
+        wanted_tags: list[str] = []
+        lowered = raw.casefold()
+        if "3.1" in lowered:
+            wanted_tags.extend(["3.1", "sam3.1", "multiplex"])
+        elif lowered == "sam3":
+            wanted_tags.extend(["sam3", "3.1", "multiplex"])
+        else:
+            wanted_tags.append(lowered)
+
+        for tag in wanted_tags:
+            for candidate in candidates:
+                if tag in candidate.name.casefold():
+                    return candidate
+        return candidates[0]
 
 
 def _select_mask_candidate(masks: Any, scores: Any) -> tuple[PILImage.Image, float | None]:

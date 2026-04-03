@@ -122,7 +122,7 @@ const modelProfile = ref('auto')
 const llmBaseModel = ref('qwen3-vl-2b')
 const llmAutoOrderText = ref('2b, 4b, 8b')
 const llmMaxTokens = ref(2048)
-const samCheckpoint = ref('sam2_hiera_tiny')
+const samCheckpoint = ref('sam3')
 const samDevice = ref<'cpu' | 'cuda'>('cuda')
 const samMultimaskOutput = ref(false)
 const postprocessEnableClose = ref(true)
@@ -339,7 +339,7 @@ async function fetchProjectSettings() {
     llmMaxTokens.value = Number(llm.max_tokens ?? 2048)
 
     const sam = data.sam ?? {}
-    samCheckpoint.value = String(sam.checkpoint ?? 'sam2_hiera_tiny')
+    samCheckpoint.value = String(sam.checkpoint ?? 'sam3')
     samDevice.value = sam.device === 'cpu' ? 'cpu' : 'cuda'
     samMultimaskOutput.value = Boolean(sam.multimask_output)
 
@@ -972,7 +972,7 @@ watch(projectId, () => {
               v-model="samCheckpoint"
               class="input"
               data-testid="project-sam-checkpoint-input"
-              placeholder="sam2_hiera_tiny"
+              placeholder="sam3"
             />
             <select v-model="samDevice" class="input compact" data-testid="project-sam-device-select">
               <option value="cuda">cuda</option>

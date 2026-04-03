@@ -67,7 +67,7 @@
 | M9 | 评估与质量评分（MVP） | val/test 指标 + 线上风险排序 | ✅ | 85598a2 |
 | M10 | 配置中心、热更新与环境切换 | 项目配置真正驱动推理/后处理/评估，并支持一键切换测试/生产档位 | ✅ | 26efec0 |
 | M11 | 真实 LLM 推理与模型切换 | vLLM/OpenAI-compatible 真接入 + `active_model_tag` 真正生效 | ✅ | 233218f |
-| M12 | 真实 SAM3 与后处理 | 真实 mask/polygon + `set_image` 缓存 + OpenCV 后处理 | 🟡 | e550e40 |
+| M12 | 真实 SAM3 与后处理 | 真实 mask/polygon + `set_image` 缓存 + OpenCV 后处理 | ✅ | e550e40 |
 | M13 | 任务基础设施升级 | Celery / Redis / WebSocket / GPU 锁替换当前轻量任务骨架 | ⬜ | - |
 | M14 | 真实 LoRA 微调闭环 | LLaMA-Factory 真训练 + LoRA 激活后真正参与推理 | ⬜ | - |
 | M15 | 评估系统增强与对比看板 | mask 指标、run 对比、失败案例分析、性能统计 | ⬜ | - |
@@ -256,6 +256,7 @@
 - 从当前自动标注逻辑中拆出独立的 `services/vllm_client.py`，统一封装 OpenAI-compatible / vLLM 调用、超时、重试、降级与日志。
 - 让 `active_model_tag` 真正参与自动标注与评估，而不是仅作为展示字段或评估快照。
 - 支持 `base` / `lora:{job_id}` / 固定 base model profile 的显式切换，并把实际使用的模型记录到任务日志与评估报告。
+- 当前阶段 `lora:{job_id}` 先保证项目配置、评估快照与请求路由真实生效；vLLM 侧 LoRA adapter 的真实挂载/热切换在 M14 完成。
 - 保留 stub 回退能力，但将其明确为降级路径，而不是默认主路径。
 
 **验收**
@@ -283,6 +284,7 @@
 **本地验证策略**
 - 在真实 SAM3 无法本地运行时，先用固定样例、后处理单测、接口集成测试和浏览器纠错测试替代。
 - `dev_low_resource` 默认不主动下载大模型；只有在提供本地 `.pt` checkpoint，或显式设置 `SAM3_ALLOW_HF_DOWNLOAD=1` 时才尝试真实 SAM3。
+- 支持通过 `SAM3_CHECKPOINT_PATH` 或 `models/sam3/` 本地权重目录自动发现 checkpoint，避免每次手工改绝对路径。
 - 真实 checkpoint、CUDA/CPU 切换、embedding 缓存命中效果在 `test_real_stack` 环境集中验收。
 
 ---
@@ -345,6 +347,7 @@
 
 **范围**
 - 提供 Windows 友好的 `start.ps1`，以及可选的 `start.sh`（便于部署到 Linux 演示机）。
+- Linux 主路径补齐 `scripts/bootstrap-linux.sh` / `scripts/use-profile.sh`，用于一键补环境与一键切换 profile；Windows 允许在缺真实依赖时回退到 `dev_low_resource`。
 - 文档说明如何准备 Redis / vLLM / SAM 权重 / LLaMA-Factory 等外部依赖。
 - 支持一键拉起 FastAPI、Celery Worker、Redis、vLLM 及前端开发/演示环境，或在缺失依赖时给出明确提示。
 
@@ -382,3 +385,4 @@
 | 2026-04-03 | M11 | ⬜ → 🟡 | 233218f | `.venv\Scripts\python.exe -m compileall backend`、`.venv\Scripts\python.exe -m pytest -q`、`npm run build`、`node output\playwright\m11\node\e2e-m11.cjs` | ⏳ 待验收 | vLLM/OpenAI-compatible 路由封装 + `active_model_tag` 真正参与自动标注/评估 + 项目级模型切换入口 |
 | 2026-04-03 | M11 | 🟡 → ✅ | 233218f | `.venv\Scripts\python.exe -m compileall backend`、`.venv\Scripts\python.exe -m pytest -q`、`npm run build`、`node output\playwright\m11\node\e2e-m11.cjs` | ✅ 通过 | M11 人工验收通过，进入 M12 真实 SAM3 与后处理 |
 | 2026-04-03 | M12 | ⬜ → 🟡 | e550e40 | `.venv\Scripts\python.exe -m compileall backend tests`、`.venv\Scripts\python.exe -m pytest -q`、`cd frontend && npm run build`、`node` 临时 Playwright 浏览器回归 | ⏳ 待验收 | SAM3 优先 + stub 回退的真实 mask/polygon 管线、掩码落盘、OpenCV/降级后处理、导入导出与点纠错贯通 |
+| 2026-04-03 | M12 | 🟡 → ✅ | d8a69cb | `.venv\Scripts\python.exe -m compileall backend tests`、`.venv\Scripts\python.exe -m pytest -q`、`cd frontend && npm run build`、`node` 临时 Playwright 浏览器回归 | ✅ 通过 | M12 人工验收通过，后续补做 Linux 真实栈补环境脚本与 SAM3 本地权重自动发现强化 |
