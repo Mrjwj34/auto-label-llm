@@ -154,10 +154,13 @@ def write_env_file(path: Path, values: dict[str, Any], *, header: str | None = N
 
 
 def system_config_payload(root_dir: Path | None = None) -> dict[str, Any]:
+    from backend.services.system_runtime_settings import build_system_runtime_settings_response
+
     settings = get_settings()
     return {
         "active_profile": detect_active_profile(root_dir=root_dir),
         "profiles": list_system_profiles(root_dir=root_dir),
+        "settings": build_system_runtime_settings_response(),
         "env_files": {
             "backend": _display_path(active_backend_env_path(root_dir), root_dir=root_dir),
             "frontend": _display_path(active_frontend_env_path(root_dir), root_dir=root_dir),

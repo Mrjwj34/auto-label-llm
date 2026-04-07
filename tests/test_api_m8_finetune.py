@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
+import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from PIL import Image as PILImage
 
+from backend.config import get_settings
+from backend.services import finetune_service
 from backend.utils.storage import resolve_path
 
 
@@ -79,18 +84,24 @@ def test_finetune_job_runs_exports_dataset_and_can_activate(client):
     assert final_status["lora_path"]
     assert final_status["log_path"]
     assert final_status["config"]["dataset"] == f"project_{project_id}_train"
+    assert final_status["config"]["runner_backend"] == "mock"
+    assert final_status["config"]["dataset_info_path"]
+    assert final_status["config"]["train_config_path"]
+    assert len(final_status["metrics"]) >= 1
 
     dataset_path = resolve_path(final_status["dataset_path"])
     assert dataset_path.exists()
     sample = json.loads(dataset_path.read_text(encoding="utf-8").splitlines()[0])
-    assert sample["messages"][0]["role"] == "user"
-    assert sample["messages"][1]["role"] == "assistant"
-    assistant_payload = json.loads(sample["messages"][1]["content"])
+    assert sample["conversations"][0]["from"] == "human"
+    assert sample["conversations"][1]["from"] == "gpt"
+    assert sample["images"]
+    assistant_payload = json.loads(sample["conversations"][1]["value"])
     assert assistant_payload["objects"][0]["label"] == "crack"
 
     lora_dir = resolve_path(final_status["lora_path"])
     assert lora_dir.exists()
     assert (lora_dir / "adapter_config.json").exists()
+    assert (lora_dir / "trainer_state.json").exists()
 
     log_resp = client.get(f"/api/finetune/{job_id}/log")
     assert log_resp.status_code == 200
@@ -147,3 +158,65 @@ def test_cannot_start_second_finetune_while_first_is_running(client):
 
     final_status = _poll_finetune_job(client, running_job_id)
     assert final_status["status"] == "done"
+
+
+def test_finetune_job_acquires_gpu_training_lock(client, monkeypatch):
+    project_id, _image_id = _create_confirmed_train_annotation(client, task_type="detection")
+    events: list[str] = []
+    original_acquire_training = finetune_service.GPULock.acquire_training
+
+    @contextmanager
+    def tracked_training_lock(*args, **kwargs):
+        events.append("requested")
+        with original_acquire_training(*args, **kwargs):
+            events.append("entered")
+            yield
+        events.append("released")
+
+    monkeypatch.setattr(finetune_service.GPULock, "acquire_training", tracked_training_lock)
+
+    start = client.post("/api/finetune/start", json={"project_id": project_id})
+    assert start.status_code == 200
+    job_id = start.json()["data"]["job_id"]
+
+    final_status = _poll_finetune_job(client, job_id)
+    assert final_status["status"] == "done"
+    assert events[:2] == ["requested", "entered"]
+    assert events[-1] == "released"
+
+
+def test_finetune_job_can_run_llamafactory_subprocess(client, monkeypatch):
+    project_id, _image_id = _create_confirmed_train_annotation(client, task_type="detection")
+    mock_cli = (Path(__file__).resolve().parent / "helpers" / "mock_llamafactory_cli.py").resolve()
+    cli_value = subprocess.list2cmdline([str(Path(sys.executable).resolve()), str(mock_cli)])
+
+    monkeypatch.setenv("FINETUNE_BACKEND", "llamafactory")
+    monkeypatch.setenv("LLAMAFACTORY_CLI", cli_value)
+    get_settings.cache_clear()
+
+    start = client.post("/api/finetune/start", json={"project_id": project_id})
+    assert start.status_code == 200
+    job_id = start.json()["data"]["job_id"]
+
+    final_status = _poll_finetune_job(client, job_id)
+    assert final_status["status"] == "done"
+    assert final_status["config"]["runner_backend"] == "llamafactory"
+
+    dataset_info_path = resolve_path(final_status["config"]["dataset_info_path"])
+    train_config_path = resolve_path(final_status["config"]["train_config_path"])
+    assert dataset_info_path.exists()
+    assert train_config_path.exists()
+
+    lora_dir = resolve_path(final_status["lora_path"])
+    assert lora_dir.exists()
+    assert (lora_dir / "adapter_model.safetensors").exists()
+
+    log_resp = client.get(f"/api/finetune/{job_id}/log")
+    assert log_resp.status_code == 200
+    log_text = log_resp.json()["data"]["log"]
+    assert "Launching LLaMA-Factory subprocess" in log_text
+    assert "train completed" in log_text
+
+    metrics = final_status["metrics"]
+    assert len(metrics) >= 3
+    assert metrics[-1]["loss"] is not None

@@ -34,7 +34,7 @@
 
 - 必须支持至少三套可切换环境档位：
   - `dev_low_resource`：开发机低算力档。默认使用 stub / mock / CPU / 最小模型配置，确保日常开发、页面联调、API 联调可持续进行。
-  - `test_real_stack`：后续统一联调档。用于连接真实 vLLM / SAM / Redis / Celery / 训练环境，验证真实链路。
+  - `test_real_stack`：后续统一联调档。用于连接真实 vLLM / SAM / Redis / 训练环境，并在需要时补充 Celery 联调，验证真实链路。
   - `demo_prod`：演示/答辩档。面向高算力机器，使用最终推荐配置。
 - 必须提供**一键切换测试配置和生产配置**的机制：
   - 形式可以是 `scripts/use-profile.ps1`、`start --profile xxx`、`.env.profile` 覆盖或等价方案；
@@ -68,8 +68,8 @@
 | M10 | 配置中心、热更新与环境切换 | 项目配置真正驱动推理/后处理/评估，并支持一键切换测试/生产档位 | ✅ | 26efec0 |
 | M11 | 真实 LLM 推理与模型切换 | vLLM/OpenAI-compatible 真接入 + `active_model_tag` 真正生效 | ✅ | 233218f |
 | M12 | 真实 SAM3 与后处理 | 真实 mask/polygon + `set_image` 缓存 + OpenCV 后处理 | ✅ | e550e40 |
-| M13 | 任务基础设施升级 | Celery / Redis / WebSocket / GPU 锁替换当前轻量任务骨架 | ⬜ | - |
-| M14 | 真实 LoRA 微调闭环 | LLaMA-Factory 真训练 + LoRA 激活后真正参与推理 | ⬜ | - |
+| M13 | 任务基础设施升级 | Redis / WebSocket / GPU 锁升级当前轻量任务骨架，Celery 视需要补齐 | 🟡 | - |
+| M14 | 真实 LoRA 微调闭环 | LLaMA-Factory 真训练 + LoRA 激活后真正参与推理 | 🟡 | - |
 | M15 | 评估系统增强与对比看板 | mask 指标、run 对比、失败案例分析、性能统计 | ⬜ | - |
 | M16 | 一键启动与演示脚本 | 一条命令启动所有服务与外部依赖 | ⬜ | - |
 
@@ -237,10 +237,10 @@
 ### M10 — 配置中心、热更新与环境切换
 
 **范围**
-- 将 `projects.config` 中已定义的关键字段真正接入运行链路：`llm.*`、`sam.*`、`postprocess.*`、`quality.*`、`evaluation.*`。
+- 将运行时关键字段真正接入运行链路：系统级 `model_profile`、`llm.*`、`sam.*`、`postprocess.*`、`quality.*`、`evaluation.*`；项目级仅保留 `labels` 与 `active_model_tag`。
 - 明确“热更新立即生效”和“需显式重载/重启”的配置项，并在后端接口与前端文案中体现。
 - 支持一键切换 `dev_low_resource` / `test_real_stack` / `demo_prod` 三类配置档位，覆盖本地开发、统一联调和答辩演示。
-- 补齐项目设置面板，支持查看、编辑、回显当前生效配置。
+- 补齐前端设置入口：在项目图片列表页承载系统级运行时设置面板，并回显当前生效配置。
 - 增加系统级模型激活接口（如 base model profile 切换），与项目级 `active_model_tag` / `model_profile` 联动。
 
 **验收**
@@ -292,17 +292,19 @@
 ### M13 — 任务基础设施升级
 
 **范围**
-- 使用 Celery + Redis 替换当前内存 `TaskManager`，同时保留现有 REST 状态查询接口的兼容性。
-- 接入 Redis result backend，统一标注、评估、微调任务状态存储。
+- 第一阶段先在现有轻量 `TaskManager` 上补齐 WebSocket 进度推送与前端实时订阅/轮询回退，保持现有 REST 查询接口兼容。
+- 使用 Redis 持久化任务状态与队列，替换当前纯内存 `TaskManager`；Celery 改为后续可选演进，不再阻塞 M13 收尾。
+- 统一标注、评估、微调任务状态存储，并支持 FastAPI / 独立 worker 分进程运行。
 - 增加 WebSocket `WS /ws/tasks/{task_id}` 进度推送，减少前端轮询依赖。
 - 实现 `utils/gpu_lock.py`，保证 vLLM / SAM / 微调之间的 GPU 资源互斥与任务串行策略。
 
 **验收**
+- 第一阶段验收：页面发起批量标注后优先通过 `WS /ws/tasks/{task_id}` 接收状态更新，失败时自动回退轮询；接口契约测试与浏览器测试均通过。
 - FastAPI 与 Worker 分进程运行时，任务状态仍可稳定查询和推送。
 - 并发触发标注与微调时，任务按锁/队列顺序执行，无显存争抢导致的 OOM 或状态错乱。
 
 **本地验证策略**
-- 开发机可先用进程内 / 本地 Redis 的集成测试、任务顺序测试和 WebSocket 契约测试验证。
+- 开发机可先用进程内 / 本地 Redis 的集成测试、任务顺序测试、WebSocket 契约测试和浏览器回归验证第一阶段落地。
 - 真正的多进程联调和 GPU 锁冲突测试在 `test_real_stack` 环境统一完成。
 
 ---
@@ -310,14 +312,14 @@
 ### M14 — 真实 LoRA 微调闭环
 
 **范围**
-- 将当前 stub 微调任务替换为真实 LLaMA-Factory subprocess 训练流程。
-- 完成 `tools/export_dataset.py`、prompt template、训练配置自动生成、日志解析与失败定位。
-- 激活接口真正负责停启或重载 vLLM，并挂载指定 LoRA adapter。
-- 前端补齐训练曲线、产物信息和更明确的“当前推理模型”状态展示。
+- 将当前 stub 微调任务升级为“可切换 runner”的训练流程：`FINETUNE_BACKEND=llamafactory` 时走真实 LLaMA-Factory subprocess，开发/测试环境保留 mock runner 回退。
+- 完成训练数据导出、prompt template、训练配置自动生成、日志解析与失败定位，并把配置/指标暴露给前端与测试。
+- 激活接口优先通过 vLLM 运行时 LoRA API 进行加载/卸载；若环境未开启 runtime update，则至少保证路由与状态切换真实生效。
+- 前端补齐 runner 状态、loss 点位摘要、产物路径等信息；完整训练曲线看板可后续继续增强。
 
 **验收**
 - 能产出真实训练目录、日志与 LoRA adapter，而不是占位文件。
-- 激活后，后续自动标注与评估实际使用该 LoRA，并可与 `base` 做结果对比。
+- 激活后，后续自动标注与评估实际使用该 LoRA，并可与 `base` 做结果对比；若本机未启用真实 vLLM runtime update，需至少通过契约测试验证 load/unload 请求正确发出。
 
 **本地验证策略**
 - 在开发机无法跑真实训练时，先把数据导出、配置生成、日志解析、激活链路、失败处理全部用单测和集成测试覆盖。
@@ -386,3 +388,6 @@
 | 2026-04-03 | M11 | 🟡 → ✅ | 233218f | `.venv\Scripts\python.exe -m compileall backend`、`.venv\Scripts\python.exe -m pytest -q`、`npm run build`、`node output\playwright\m11\node\e2e-m11.cjs` | ✅ 通过 | M11 人工验收通过，进入 M12 真实 SAM3 与后处理 |
 | 2026-04-03 | M12 | ⬜ → 🟡 | e550e40 | `.venv\Scripts\python.exe -m compileall backend tests`、`.venv\Scripts\python.exe -m pytest -q`、`cd frontend && npm run build`、`node` 临时 Playwright 浏览器回归 | ⏳ 待验收 | SAM3 优先 + stub 回退的真实 mask/polygon 管线、掩码落盘、OpenCV/降级后处理、导入导出与点纠错贯通 |
 | 2026-04-03 | M12 | 🟡 → ✅ | d8a69cb | `.venv\Scripts\python.exe -m compileall backend tests`、`.venv\Scripts\python.exe -m pytest -q`、`cd frontend && npm run build`、`node` 临时 Playwright 浏览器回归 | ✅ 通过 | M12 人工验收通过，后续补做 Linux 真实栈补环境脚本与 SAM3 本地权重自动发现强化 |
+| 2026-04-03 | M13 | ⬜ → 🟡 | - | `.venv\Scripts\python.exe -m compileall backend tests`、`.venv\Scripts\python.exe -m pytest -q`、`cd frontend && npm run build`、`node output\playwright\m13\node\e2e-m13.cjs` | ⏳ 待验收 | 系统级运行时设置入口修正 + `WS /ws/tasks/{task_id}` 首阶段落地，前端优先走 WebSocket 并保留轮询回退 |
+| 2026-04-07 | M13 | 🟡 → 🟡 | - | `.venv\Scripts\python.exe scripts\verify_m13_real_redis.py --redis-url redis://127.0.0.1:6379/15 --flush-redis-db` | ✅ 真实 Redis + 独立 worker + 浏览器回归通过 | 当前 Redis 任务骨架已完成分进程联调验证，后续是否引入 Celery 单独在 M13 收尾时决策 |
+| 2026-04-07 | M14 | ⬜ → 🟡 | - | `.venv\Scripts\python.exe -m compileall backend tests scripts`、`.venv\Scripts\python.exe -m pytest -q`、`cd frontend && npm run build`、`.venv\Scripts\python.exe scripts\verify_m14_browser.py --redis-url redis://127.0.0.1:6379/14 --flush-redis-db` | ✅ 后端测试 + 浏览器回归通过 | 真实 LLaMA-Factory subprocess 入口、metrics 暴露、LoRA runtime API hook 与可复跑浏览器验证脚本已落地；真实训练效果仍待 `test_real_stack` 验收 |

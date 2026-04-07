@@ -108,20 +108,53 @@ npm run dev
 
 默认前端地址：`http://localhost:5173`
 
-### 项目设置面板（M10）
+### 运行时设置入口（M10）
 
-在项目图片列表页已经接入项目级配置中心，可直接查看和保存：
+项目图片列表页现在承载的是“系统级运行时设置入口”，可直接查看和保存：
 
 - `model_profile`、`llm.*`、`sam.*`
 - `postprocess.*`
 - `quality.*`
 - `evaluation.*`
 
+项目级仍保留：
+
+- `labels`
+- `active_model_tag`
+
 其中：
 
 - `postprocess.*`、`quality.*`、`evaluation.*` 为热更新字段，保存后会影响后续任务与页面展示
 - `model_profile`、`llm.base_model`、`sam.*` 等字段会在保存后提示“需要显式重载/重启”
 - 系统 profile 切换按钮会同时更新 `.env.active` 和 `frontend/.env.local`
+- 系统级运行时设置会持久化到 `data/system/runtime_settings.json`
+
+### 任务推送（M13 第一阶段）
+
+- 批量自动标注页面会优先连接 `WS /ws/tasks/{task_id}` 接收任务进度更新
+- 浏览器或服务端不支持 WebSocket 时，前端会自动回退到轮询 `/api/tasks/{task_id}/status`
+- 当前实现已经切到基于 Redis 的任务状态与队列骨架：`RedisTaskManager` 负责状态持久化，`RedisTaskWorker` 负责消费 annotation / evaluation / finetune 队列
+- 开发测试可以继续使用 `fakeredis` + 嵌入式 worker；真实联调时可以把 `TASK_EMBEDDED_WORKER=false`，单独启动 `python -m backend.task_worker_main`
+- 若本机已有可用 Redis，可直接跑真实链路验证：
+```powershell
+.\.venv\Scripts\python.exe scripts\verify_m13_real_redis.py --redis-url redis://127.0.0.1:6379/15 --flush-redis-db
+```
+
+### 微调与 LoRA（M14 进行中）
+
+- 微调任务现在支持 `FINETUNE_BACKEND=auto|mock|llamafactory`
+- 默认 `auto` 会在检测到 `LLAMAFACTORY_CLI` 可用时走真实 `llamafactory-cli train <config>` 子进程；否则回退到可测试的 mock runner
+- 每个微调 job 会额外落盘：
+  - 训练数据：`data/projects/{project_id}/exports/finetune/job_{job_id}/project_{project_id}_train.jsonl`
+  - `dataset_info.json`
+  - `llamafactory-train.yaml`（当前实现使用 JSON 兼容 YAML 的内容，便于测试与真实 CLI 共用）
+- `GET /api/finetune/{id}/status` 现在会返回解析后的 `metrics`，前端会展示 runner 类型和 loss 点位摘要
+- 如果启用 `VLLM_ENABLE_RUNTIME_LORA_UPDATE=true`，激活 LoRA 时会调用 vLLM 运行时接口 `/v1/load_lora_adapter` / `/v1/unload_lora_adapter`
+- 如果未启用上述开关，激活操作仍然会更新项目的 `active_model_tag`，但不会主动改动外部 vLLM 进程
+- 可直接运行浏览器回归脚本验证完整链路：
+```powershell
+.\.venv\Scripts\python.exe scripts\verify_m14_browser.py --redis-url redis://127.0.0.1:6379/14 --flush-redis-db
+```
 
 ### 模型路由与切换（M11）
 
@@ -136,9 +169,9 @@ npm run dev
 当前实现的真实状态：
 
 - M11 不是直连 OpenAI 云 API，而是请求 `VLLM_BASE_URL/v1/chat/completions` 这类 OpenAI-compatible 接口；默认目标是本地/私有 vLLM 服务
-- `lora:{job_id}` 当前已经能真实参与项目配置、评估记录和请求路由，但还没有做 vLLM 侧 LoRA adapter 的真实挂载/热切换
-- 换句话说：LoRA 现在是“路由标签和产物选择真实生效”，不是“vLLM 推理时已经真正吃到了 adapter 权重”
-- 真正的 LoRA 训练产物接入 vLLM 推理时，将在后续 M14 落地
+- `lora:{job_id}` 已经真实参与项目配置、评估记录和请求路由
+- M14 当前新增了真实 LLaMA-Factory 子进程训练入口，以及可选的 vLLM 运行时 LoRA 加载/卸载接口联动
+- 低算力 / 测试环境仍然默认保留 mock finetune runner，确保 `pytest`、浏览器回归和本地联调稳定可跑
 
 Linux 下可以直接用辅助脚本把真实模型暴露成当前项目配置里的逻辑名称：
 
@@ -160,7 +193,7 @@ POST /api/projects/{id}/evaluate
 其中：
 
 - `POST /api/projects/{id}/models/activate` 用于在 `base` 和 `lora:{job_id}` 之间切换当前项目的活动模型
-- `POST /api/finetune/{id}/activate` 仍然保留，用于从最近完成的 LoRA 任务快速激活对应 tag
+- `POST /api/finetune/{id}/activate` 仍然保留，用于从最近完成的 LoRA 任务快速激活对应 tag；启用 `VLLM_ENABLE_RUNTIME_LORA_UPDATE=true` 时也会同步触发 vLLM 运行时 LoRA 更新
 
 ### 分割与 SAM3（M12）
 

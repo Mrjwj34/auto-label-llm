@@ -25,6 +25,15 @@ class Settings(BaseSettings):
     llm_request_timeout_seconds: float = 30.0
     llm_max_retries: int = 1
     llm_max_tokens: int = 2048
+    redis_url: str = "redis://127.0.0.1:6379/0"
+    task_embedded_worker: bool = False
+    task_worker_concurrency: int = 1
+    finetune_backend: Literal["auto", "mock", "llamafactory"] = "auto"
+    llamafactory_cli: str = "llamafactory-cli"
+    finetune_timeout_seconds: int = 0
+    vllm_enable_runtime_lora_update: bool = False
+    sam_max_concurrency: int = 1
+    sam_lock_timeout_seconds: float = 15.0
 
     host: str = "127.0.0.1"
     port: int = 8000

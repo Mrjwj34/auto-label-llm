@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import math
 import os
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypedDict
@@ -13,6 +14,7 @@ from PIL import ImageDraw
 from backend.config import get_settings
 from backend.models.annotation import Annotation
 from backend.models.image import Image
+from backend.utils.gpu_lock import GPULock
 from backend.utils.storage import resolve_path
 
 try:
@@ -156,32 +158,35 @@ class SAMService:
         checkpoint: str = "sam3",
         device: str = "cuda",
         multimask_output: bool = False,
+        lock_timeout: float | None = None,
     ) -> SAMPrediction:
         normalized_bbox = _canonicalize_bbox(bbox)
         runtime = self._get_runtime(checkpoint=checkpoint, device=device)
-        cache_hit = self._prepare_image(runtime, image)
+        lock_ctx = GPULock.acquire_sam(timeout=lock_timeout) if runtime.device == "cuda" else nullcontext()
+        with lock_ctx:
+            cache_hit = self._prepare_image(runtime, image)
 
-        if runtime.kind == "sam3":
-            try:
-                prediction = self._predict_with_sam3(
-                    runtime,
-                    bbox=normalized_bbox,
-                    points=None,
-                    multimask_output=multimask_output,
-                )
-                prediction.cache_hit = cache_hit
-                return prediction
-            except Exception as exc:  # noqa: BLE001
-                runtime.load_error = str(exc)
+            if runtime.kind == "sam3":
+                try:
+                    prediction = self._predict_with_sam3(
+                        runtime,
+                        bbox=normalized_bbox,
+                        points=None,
+                        multimask_output=multimask_output,
+                    )
+                    prediction.cache_hit = cache_hit
+                    return prediction
+                except Exception as exc:  # noqa: BLE001
+                    runtime.load_error = str(exc)
 
-        return self._predict_with_stub(
-            runtime,
-            bbox=normalized_bbox,
-            points=None,
-            image=image,
-            multimask_output=multimask_output,
-            cache_hit=cache_hit,
-        )
+            return self._predict_with_stub(
+                runtime,
+                bbox=normalized_bbox,
+                points=None,
+                image=image,
+                multimask_output=multimask_output,
+                cache_hit=cache_hit,
+            )
 
     def refine_annotation(
         self,
@@ -192,34 +197,37 @@ class SAMService:
         checkpoint: str = "sam3",
         device: str = "cuda",
         multimask_output: bool = False,
+        lock_timeout: float | None = None,
     ) -> SAMPrediction:
         if annotation.bbox is None:
             raise ValueError("annotation bbox is required for point correction")
 
         runtime = self._get_runtime(checkpoint=checkpoint, device=device)
-        cache_hit = self._prepare_image(runtime, image)
+        lock_ctx = GPULock.acquire_sam(timeout=lock_timeout) if runtime.device == "cuda" else nullcontext()
+        with lock_ctx:
+            cache_hit = self._prepare_image(runtime, image)
 
-        if runtime.kind == "sam3":
-            try:
-                prediction = self._predict_with_sam3(
-                    runtime,
-                    bbox=_canonicalize_bbox(annotation.bbox),
-                    points=points,
-                    multimask_output=multimask_output,
-                )
-                prediction.cache_hit = cache_hit
-                return prediction
-            except Exception as exc:  # noqa: BLE001
-                runtime.load_error = str(exc)
+            if runtime.kind == "sam3":
+                try:
+                    prediction = self._predict_with_sam3(
+                        runtime,
+                        bbox=_canonicalize_bbox(annotation.bbox),
+                        points=points,
+                        multimask_output=multimask_output,
+                    )
+                    prediction.cache_hit = cache_hit
+                    return prediction
+                except Exception as exc:  # noqa: BLE001
+                    runtime.load_error = str(exc)
 
-        return self._predict_with_stub(
-            runtime,
-            bbox=_refine_bbox_with_points(annotation.bbox, points),
-            points=points,
-            image=image,
-            multimask_output=multimask_output,
-            cache_hit=cache_hit,
-        )
+            return self._predict_with_stub(
+                runtime,
+                bbox=_refine_bbox_with_points(annotation.bbox, points),
+                points=points,
+                image=image,
+                multimask_output=multimask_output,
+                cache_hit=cache_hit,
+            )
 
     def _get_runtime(self, *, checkpoint: str, device: str) -> _SAMRuntime:
         normalized_checkpoint = str(checkpoint or "sam3").strip() or "sam3"

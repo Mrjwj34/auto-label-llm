@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import threading
-from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -20,11 +18,7 @@ from backend.models.project import Project
 from backend.services.auto_annotator import generate_auto_annotations
 from backend.services.project_settings import load_project_settings
 from backend.services.vllm_client import GeneratedAnnotation, resolve_inference_route
-
-
-_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="evaluation")
-_futures: dict[int, Future[None]] = {}
-_futures_lock = threading.Lock()
+from backend.tasks.task_manager import TaskContext, get_task_manager
 
 
 def _store_path(path: Path) -> str:
@@ -204,6 +198,7 @@ def evaluation_run_to_dict(run: EvaluationRun) -> dict[str, Any]:
         "started_at": run.started_at,
         "finished_at": run.finished_at,
         "created_at": run.created_at,
+        "task_id": config.get("task_id"),
         "config": config or None,
     }
 
@@ -268,7 +263,7 @@ def create_evaluation_run(
     iou_threshold: float | None,
     max_samples: int | None,
     db: Session,
-) -> EvaluationRun:
+) -> tuple[EvaluationRun, str]:
     project = db.get(Project, project_id)
     if project is None:
         raise AppError(404, "project not found")
@@ -323,13 +318,20 @@ def create_evaluation_run(
     db.commit()
     db.refresh(run)
 
-    future = _executor.submit(_run_evaluation, run.id)
-    with _futures_lock:
-        _futures[run.id] = future
-    return run
+    task_id = get_task_manager().create(
+        kind="evaluation_run",
+        payload={"run_id": run.id},
+        queue="evaluation",
+    )
+    config["task_id"] = task_id
+    run.config = json.dumps(config, ensure_ascii=False)
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    return run, task_id
 
 
-def _run_evaluation(run_id: int) -> None:
+def run_evaluation_task(run_id: int, *, ctx: TaskContext | None = None) -> None:
     session_factory = get_session_factory()
     try:
         with session_factory() as db:
@@ -360,6 +362,8 @@ def _run_evaluation(run_id: int) -> None:
             run.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
             db.add(run)
             db.commit()
+            if ctx is not None:
+                ctx.set_progress(5, f"evaluation run #{run.id} started")
 
             images = db.execute(
                 select(Image).where(Image.project_id == project.id, Image.id.in_(image_ids)).order_by(Image.id.asc())
@@ -368,7 +372,13 @@ def _run_evaluation(run_id: int) -> None:
                 raise RuntimeError("evaluation images not found")
 
             per_image: list[dict[str, Any]] = []
-            for image in images:
+            total_images = len(images)
+            for index, image in enumerate(images, start=1):
+                if ctx is not None:
+                    ctx.set_progress(
+                        min(90, int(10 + ((index - 1) / max(1, total_images)) * 75)),
+                        f"evaluating image {index}/{total_images}",
+                    )
                 gt_annotations = db.execute(
                     select(Annotation)
                     .where(
@@ -444,6 +454,8 @@ def _run_evaluation(run_id: int) -> None:
             run.finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
             db.add(run)
             db.commit()
+            if ctx is not None:
+                ctx.set_progress(100, f"evaluation run #{run.id} completed")
     except Exception as exc:  # noqa: BLE001
         with session_factory() as db:
             run = db.get(EvaluationRun, run_id)
@@ -453,6 +465,5 @@ def _run_evaluation(run_id: int) -> None:
                 run.metrics = json.dumps({"error": str(exc)}, ensure_ascii=False)
                 db.add(run)
                 db.commit()
-    finally:
-        with _futures_lock:
-            _futures.pop(run_id, None)
+        if ctx is not None:
+            ctx.set_progress(100, f"evaluation run failed: {exc}")

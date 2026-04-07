@@ -7,6 +7,8 @@ from backend.api import AppError
 from backend.config import DEFAULT_PROJECT_SETTINGS
 from backend.models.project import Project
 
+PROJECT_EDITABLE_KEYS = ("labels",)
+SYSTEM_RUNTIME_KEYS = ("model_profile", "llm", "sam", "postprocess", "quality", "evaluation")
 
 HOT_RELOAD_PATHS = (
     "labels",
@@ -26,6 +28,7 @@ HOT_RELOAD_PATHS = (
     "postprocess.epsilon_ratio",
     "postprocess.min_area_ratio",
 )
+SYSTEM_HOT_RELOAD_PATHS = tuple(path for path in HOT_RELOAD_PATHS if path != "labels")
 RELOAD_REQUIRED_PATHS = (
     "model_profile",
     "active_model_tag",
@@ -35,6 +38,7 @@ RELOAD_REQUIRED_PATHS = (
     "sam.device",
     "sam.multimask_output",
 )
+SYSTEM_RELOAD_REQUIRED_PATHS = tuple(path for path in RELOAD_REQUIRED_PATHS if path != "active_model_tag")
 MODEL_PROFILES = ("auto", "fixed", "dev_low_resource", "test_real_stack", "demo_prod")
 
 
@@ -52,7 +56,7 @@ def build_project_settings_response(project: Project | None, stored: dict[str, A
 
     merged = merged_project_settings(project, stored=stored)
     payload = copy.deepcopy(merged)
-    payload["_meta"] = settings_metadata()
+    payload["_meta"] = project_settings_metadata()
     payload["_meta"]["active_system_profile"] = detect_active_profile()
     payload["_meta"]["resolved_project_profile"] = resolve_project_profile_name(project, stored=stored)
     return payload
@@ -64,8 +68,22 @@ def sanitize_project_settings_patch(patch: dict[str, Any]) -> dict[str, Any]:
 
     cleaned: dict[str, Any] = {}
     for key, value in patch.items():
-        if key not in DEFAULT_PROJECT_SETTINGS:
+        if key not in PROJECT_EDITABLE_KEYS:
+            if key in SYSTEM_RUNTIME_KEYS:
+                raise AppError(400, f"{key} is now a system-level setting; use /api/system/settings instead")
             raise AppError(400, f"unknown settings key: {key}")
+        cleaned[key] = _sanitize_root_value(key, value)
+    return cleaned
+
+
+def sanitize_system_settings_patch(patch: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(patch, dict):
+        raise AppError(400, "settings patch must be an object")
+
+    cleaned: dict[str, Any] = {}
+    for key, value in patch.items():
+        if key not in SYSTEM_RUNTIME_KEYS:
+            raise AppError(400, f"unknown system settings key: {key}")
         cleaned[key] = _sanitize_root_value(key, value)
     return cleaned
 
@@ -85,12 +103,19 @@ def settings_change_summary(patch: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def settings_metadata() -> dict[str, Any]:
+def runtime_settings_metadata() -> dict[str, Any]:
     return {
-        "hot_reload_paths": list(HOT_RELOAD_PATHS),
-        "reload_required_paths": list(RELOAD_REQUIRED_PATHS),
+        "hot_reload_paths": list(SYSTEM_HOT_RELOAD_PATHS),
+        "reload_required_paths": list(SYSTEM_RELOAD_REQUIRED_PATHS),
         "available_model_profiles": list(MODEL_PROFILES),
-        "note": "Hot-reload fields affect new tasks immediately after save. Reload-required fields need explicit profile/model reload or service restart.",
+        "note": "System runtime settings affect all projects. Hot-reload fields affect new tasks immediately after save. Reload-required fields need explicit profile/model reload or service restart.",
+    }
+
+
+def project_settings_metadata() -> dict[str, Any]:
+    return {
+        "project_editable_paths": list(PROJECT_EDITABLE_KEYS),
+        "note": "Project settings now keep project-specific data only. Runtime fields are configured globally via system settings.",
     }
 
 

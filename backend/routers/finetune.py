@@ -27,8 +27,8 @@ class FinetuneStartIn(BaseModel):
 
 @router.post("/finetune/start")
 def start_finetune(payload: FinetuneStartIn, db: Session = Depends(get_db)):
-    job = create_finetune_job(payload.project_id, db)
-    return ok({"job_id": job.id})
+    job, task_id = create_finetune_job(payload.project_id, db)
+    return ok({"job_id": job.id, "task_id": task_id})
 
 
 @router.get("/finetune/{job_id}/status")
@@ -54,8 +54,8 @@ def get_finetune_log(job_id: int, db: Session = Depends(get_db)):
 
 @router.post("/finetune/{job_id}/activate")
 def activate_finetune(job_id: int, db: Session = Depends(get_db)):
-    activate_finetune_job(job_id, db)
-    return ok(None)
+    result = activate_finetune_job(job_id, db)
+    return ok(result, message=result["message"])
 
 
 @router.get("/projects/{project_id}/finetune-jobs")

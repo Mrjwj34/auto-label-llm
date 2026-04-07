@@ -15,6 +15,8 @@ if str(ROOT_DIR) not in sys.path:
 from backend.app import create_app
 from backend.config import get_settings
 from backend.database import get_engine, get_session_factory
+from backend.services.redis_client import _get_redis_client
+from backend.tasks import task_manager as task_manager_module
 
 
 @pytest.fixture()
@@ -34,11 +36,17 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
     monkeypatch.setenv("APP_PROFILE", "dev_low_resource")
     monkeypatch.setenv("ANNOTATION_BACKEND", "stub")
+    monkeypatch.setenv("REDIS_URL", f"fakeredis://{root_dir.as_posix()}/0")
+    monkeypatch.setenv("TASK_EMBEDDED_WORKER", "true")
+    monkeypatch.setenv("TASK_WORKER_CONCURRENCY", "1")
+    monkeypatch.setenv("FINETUNE_BACKEND", "mock")
 
     # reset caches so the app uses our temp paths
     get_settings.cache_clear()
     get_engine.cache_clear()
     get_session_factory.cache_clear()
+    _get_redis_client.cache_clear()
+    task_manager_module._manager = None
 
     app = create_app()
     with TestClient(app) as c:

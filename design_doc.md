@@ -54,7 +54,7 @@
 | 推理引擎 | vLLM |
 | 微调框架 | LLaMA-Factory |
 | 后端框架 | FastAPI |
-| 任务队列 | Celery + Redis |
+| 任务队列 | RedisTaskWorker（当前落地） / Celery + Redis（可选演进） |
 | 持久化存储 | SQLite（via SQLAlchemy） |
 | 文件存储 | 本地文件系统 |
 | SAM set_image 缓存 | 同一张图连续纠错复用 embedding（`current_image_id`）；可选扩展 LRU |
@@ -84,7 +84,7 @@
 └──────┬──────────┘        └───────────────────┘
        │ 分发
 ┌──────▼──────────────────────────────────────────┐
-│              Celery Worker 进程                   │
+│        RedisTaskWorker / Celery Worker 进程        │
 │                                                   │
 │  ┌─────────────┐   ┌──────────────────────────┐  │
 │  │  标注任务队列 │   │     微调任务队列（独占）   │  │
@@ -115,6 +115,11 @@
 - FastAPI：`http://localhost:8000`（REST + WebSocket）
 - vLLM（OpenAI-compatible）：`http://localhost:8001`
 - Redis：`redis://localhost:6379/0`（broker）+ `redis://localhost:6379/1`（result backend）
+
+当前实现说明：
+
+- 代码已经优先落地 `RedisTaskManager + RedisTaskWorker`，用于任务状态持久化、独立 worker 消费与 WebSocket 推送。
+- 若后续需要引入 Celery，目标是替换执行器实现而不改动现有 REST / WebSocket 契约。
 
 建议集中在 `backend/config.py` 管理（避免散落在代码里硬编码）：
 
@@ -293,7 +298,7 @@ logs/
 | `services/finetune_service.py`：按显存自动生成 LLaMA-Factory yaml 配置 |
 | `tasks/finetune_task.py`：subprocess 拉起训练，实时写 log，完成后更新 DB |
 | 微调接口：`POST /api/finetune/start`，`GET /api/finetune/{id}/status`，`GET /api/finetune/{id}/log` |
-| LoRA 激活接口：`POST /api/finetune/{id}/activate`（若微调期间暂停/关闭 vLLM，则此接口负责启动并加载新 adapter） |
+| LoRA 激活接口：`POST /api/finetune/{id}/activate`（优先通过 vLLM runtime API 加载/卸载 adapter；若未启用 runtime update，则至少切换项目 active_model_tag） |
 | 前端微调控制台：显示日志、loss 曲线（轮询解析 log）、完成后切换模型 |
 | `tools/import_dataset.py`：支持导入外部 YOLO / COCO 格式数据集 |
 

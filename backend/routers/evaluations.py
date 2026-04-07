@@ -29,7 +29,7 @@ class EvaluationStartIn(BaseModel):
 
 @router.post("/projects/{project_id}/evaluate")
 def start_evaluation(project_id: int, payload: EvaluationStartIn, db: Session = Depends(get_db)):
-    run = create_evaluation_run(
+    run, task_id = create_evaluation_run(
         project_id,
         split=payload.split,
         image_ids=payload.image_ids,
@@ -38,7 +38,7 @@ def start_evaluation(project_id: int, payload: EvaluationStartIn, db: Session = 
         max_samples=payload.max_samples,
         db=db,
     )
-    return ok({"run_id": run.id})
+    return ok({"run_id": run.id, "task_id": task_id})
 
 
 @router.get("/evaluations/{run_id}")

@@ -55,6 +55,9 @@ def profile_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("ROOT_DIR", str(root_dir))
     monkeypatch.setenv("DATA_DIR", str(data_dir))
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
+    monkeypatch.setenv("REDIS_URL", f"fakeredis://{root_dir.as_posix()}/0")
+    monkeypatch.setenv("TASK_EMBEDDED_WORKER", "true")
+    monkeypatch.setenv("TASK_WORKER_CONCURRENCY", "1")
     for env_name in (
         "APP_PROFILE",
         "ANNOTATION_BACKEND",
@@ -82,11 +85,37 @@ def test_project_settings_patch_returns_change_summary_and_metadata(client: Test
     assert before.status_code == 200
     before_payload = before.json()["data"]
     assert before_payload["_meta"]["active_system_profile"] == "dev_low_resource"
+    assert "labels" in before_payload["_meta"]["project_editable_paths"]
+
+    patch = client.patch(
+        f"/api/projects/{project_id}/settings",
+        json={"labels": ["crack", "scratch"]},
+    )
+    assert patch.status_code == 200
+
+    after = client.get(f"/api/projects/{project_id}/settings")
+    assert after.status_code == 200
+    after_payload = after.json()["data"]
+    assert after_payload["labels"] == ["crack", "scratch"]
+
+    invalid = client.patch(f"/api/projects/{project_id}/settings", json={"unknown": True})
+    assert invalid.status_code == 400
+    assert "unknown settings key" in invalid.json()["message"]
+
+    runtime_invalid = client.patch(f"/api/projects/{project_id}/settings", json={"sam": {"checkpoint": "sam3.1"}})
+    assert runtime_invalid.status_code == 400
+    assert "/api/system/settings" in runtime_invalid.json()["message"]
+
+
+def test_system_runtime_settings_patch_returns_change_summary_and_metadata(client: TestClient):
+    before = client.get("/api/system/settings")
+    assert before.status_code == 200
+    before_payload = before.json()["data"]
     assert "quality.threshold_review" in before_payload["_meta"]["hot_reload_paths"]
     assert "sam.checkpoint" in before_payload["_meta"]["reload_required_paths"]
 
     patch = client.patch(
-        f"/api/projects/{project_id}/settings",
+        "/api/system/settings",
         json={
             "quality": {"threshold_review": 0.72},
             "sam": {"checkpoint": "sam3.1"},
@@ -100,15 +129,11 @@ def test_project_settings_patch_returns_change_summary_and_metadata(client: Test
     assert "sam.checkpoint" in change["reload_required_paths"]
     assert change["reload_required"] is True
 
-    after = client.get(f"/api/projects/{project_id}/settings")
+    after = client.get("/api/system/settings")
     assert after.status_code == 200
     after_payload = after.json()["data"]
     assert after_payload["quality"]["threshold_review"] == 0.72
     assert after_payload["sam"]["checkpoint"] == "sam3.1"
-
-    invalid = client.patch(f"/api/projects/{project_id}/settings", json={"unknown": True})
-    assert invalid.status_code == 400
-    assert "unknown settings key" in invalid.json()["message"]
 
 
 def test_system_profile_activation_updates_runtime_and_auto_project_defaults(profile_client):
@@ -146,7 +171,7 @@ def test_system_profile_activation_updates_runtime_and_auto_project_defaults(pro
     assert settings_payload["sam"]["checkpoint"] == "sam3.1"
     assert settings_payload["_meta"]["resolved_project_profile"] == "test_real_stack"
 
-    patch = client.patch(f"/api/projects/{project_id}/settings", json={"model_profile": "demo_prod"})
+    patch = client.patch("/api/system/settings", json={"model_profile": "demo_prod"})
     assert patch.status_code == 200
     assert patch.json()["data"]["change"]["reload_required"] is True
 
@@ -162,10 +187,12 @@ def test_postprocess_and_quality_settings_affect_new_segmentation_predictions(cl
     project_id = _create_project(client, task_type="segmentation", name="m10-seg")
     image_id = _upload_image(client, project_id, filename="seg.png")
 
+    labels_settings = client.patch(f"/api/projects/{project_id}/settings", json={"labels": ["crack"]})
+    assert labels_settings.status_code == 200
+
     first_settings = client.patch(
-        f"/api/projects/{project_id}/settings",
+        "/api/system/settings",
         json={
-            "labels": ["crack"],
             "quality": {"enable": False},
             "sam": {"checkpoint": "sam3.1", "multimask_output": True},
             "postprocess": {"enable_close": False, "enable_dp_simplify": False},
@@ -188,7 +215,7 @@ def test_postprocess_and_quality_settings_affect_new_segmentation_predictions(cl
     assert first_row["quality_score"] is None
 
     second_settings = client.patch(
-        f"/api/projects/{project_id}/settings",
+        "/api/system/settings",
         json={
             "quality": {
                 "enable": True,

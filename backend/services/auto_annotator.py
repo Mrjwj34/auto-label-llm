@@ -140,6 +140,7 @@ def _attach_segmentation_shapes(
 
     sam = SAMService()
     sam_settings = project_settings.get("sam", {}) if isinstance(project_settings.get("sam"), dict) else {}
+    sam_lock_timeout = float(get_settings().sam_lock_timeout_seconds)
     enriched: list[GeneratedAnnotation] = []
     for annotation in annotations:
         prediction = sam.predict_polygon(
@@ -148,6 +149,7 @@ def _attach_segmentation_shapes(
             checkpoint=str(sam_settings.get("checkpoint") or "sam3"),
             device=str(sam_settings.get("device") or "cuda"),
             multimask_output=bool(sam_settings.get("multimask_output", False)),
+            lock_timeout=sam_lock_timeout,
         )
         processed = apply_project_postprocess(
             project,

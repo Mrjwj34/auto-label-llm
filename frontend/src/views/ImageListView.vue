@@ -18,6 +18,16 @@ type ImageRow = {
 type DatasetFormat = 'yolo' | 'coco'
 type ImageSortMode = 'newest' | 'quality_asc' | 'quality_desc'
 type EvaluationSplit = 'train' | 'val' | 'test'
+type TaskTransport = 'idle' | 'polling' | 'websocket'
+
+type FinetuneMetricPoint = {
+  epoch?: number
+  epoch_total?: number
+  step?: number
+  loss?: number
+  learning_rate?: number
+  raw?: string
+}
 
 type FinetuneJobRow = {
   id: number
@@ -32,6 +42,7 @@ type FinetuneJobRow = {
   model_tag: string
   is_active: boolean | null
   config: Record<string, unknown> | null
+  metrics?: FinetuneMetricPoint[]
 }
 
 type EvaluationRunRow = {
@@ -49,21 +60,64 @@ type EvaluationRunRow = {
 }
 
 type ProjectSettingsMeta = {
-  hot_reload_paths: string[]
-  reload_required_paths: string[]
-  available_model_profiles: string[]
+  project_editable_paths: string[]
   active_system_profile: string
   resolved_project_profile: string
   note: string
 }
 
-type ProjectSettingsChange = {
+type SettingsChange = {
   changed_paths: string[]
   hot_reload_paths: string[]
   reload_required_paths: string[]
   other_paths: string[]
   reload_required: boolean
   message: string
+}
+
+type SystemSettingsMeta = {
+  hot_reload_paths: string[]
+  reload_required_paths: string[]
+  available_model_profiles: string[]
+  active_system_profile: string
+  resolved_runtime_profile: string
+  storage_path: string
+  note: string
+}
+
+type SystemRuntimeSettings = {
+  model_profile: string
+  llm: {
+    base_model: string
+    auto_order: string[]
+    max_tokens: number
+  }
+  sam: {
+    checkpoint: string
+    device: 'cpu' | 'cuda'
+    multimask_output: boolean
+  }
+  postprocess: {
+    enable_close: boolean
+    close_kernel: number
+    enable_dp_simplify: boolean
+    epsilon_ratio: number
+    min_area_ratio: number
+  }
+  quality: {
+    enable: boolean
+    threshold_review: number
+    threshold_ok: number
+    use_llm_confidence: boolean
+    use_sam_score: boolean
+    enable_consistency_check: boolean
+  }
+  evaluation: {
+    split: EvaluationSplit
+    iou_threshold: number
+    max_samples: number | null
+  }
+  _meta: SystemSettingsMeta
 }
 
 type SystemProfileRow = {
@@ -77,6 +131,7 @@ type SystemProfileRow = {
 type SystemConfig = {
   active_profile: string
   profiles: SystemProfileRow[]
+  settings: SystemRuntimeSettings
   env_files: {
     backend: string
     frontend: string
@@ -116,8 +171,9 @@ const projectLabels = computed(() => parseLabels(labelsText.value))
 const canStartAnnotate = computed(() => !loading.value && projectLabels.value.length > 0)
 const settingsSaving = ref(false)
 const settingsMessage = ref('')
-const settingsChange = ref<ProjectSettingsChange | null>(null)
+const settingsChange = ref<SettingsChange | null>(null)
 const settingsMeta = ref<ProjectSettingsMeta | null>(null)
+const systemSettingsMeta = ref<SystemSettingsMeta | null>(null)
 const modelProfile = ref('auto')
 const llmBaseModel = ref('qwen3-vl-2b')
 const llmAutoOrderText = ref('2b, 4b, 8b')
@@ -170,6 +226,14 @@ const latestFinetuneJob = computed(() => finetuneJobs.value[0] ?? null)
 const canStartFinetune = computed(
   () => !finetuneStarting.value && !['pending', 'running'].includes(latestFinetuneJob.value?.status ?? '')
 )
+const latestFinetuneMetricText = computed(() => {
+  const points = latestFinetuneJob.value?.metrics ?? []
+  if (points.length === 0) return 'curve=waiting'
+  const last = points[points.length - 1] ?? {}
+  const epoch = typeof last.epoch === 'number' ? last.epoch.toFixed(last.epoch % 1 === 0 ? 0 : 2) : '-'
+  const loss = typeof last.loss === 'number' ? last.loss.toFixed(4) : '-'
+  return `curve=${points.length} points · epoch=${epoch} · loss=${loss}`
+})
 
 const evaluationSplit = ref<'val' | 'test'>('val')
 const evaluationRuns = ref<EvaluationRunRow[]>([])
@@ -206,10 +270,12 @@ const taskState = reactive({
   progress: 0 as number,
   message: '' as string,
 })
+const taskTransport = ref<TaskTransport>('idle')
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let finetunePollTimer: ReturnType<typeof setInterval> | null = null
 let evaluationPollTimer: ReturnType<typeof setInterval> | null = null
+let taskSocket: WebSocket | null = null
 
 const sortedImages = computed(() => {
   const rows = [...images.value]
@@ -236,6 +302,10 @@ function imageSrc(img: ImageRow): string {
 function stopPolling() {
   if (pollTimer) clearInterval(pollTimer)
   pollTimer = null
+  if (taskSocket) {
+    taskSocket.close()
+    taskSocket = null
+  }
 }
 
 function stopFinetunePolling() {
@@ -330,47 +400,51 @@ async function fetchProjectSettings() {
     if (Array.isArray(labels)) {
       labelsText.value = labels.join(', ')
     }
-
-    modelProfile.value = String(data.model_profile ?? 'auto')
-
-    const llm = data.llm ?? {}
-    llmBaseModel.value = String(llm.base_model ?? 'qwen3-vl-2b')
-    llmAutoOrderText.value = Array.isArray(llm.auto_order) ? llm.auto_order.join(', ') : '2b, 4b, 8b'
-    llmMaxTokens.value = Number(llm.max_tokens ?? 2048)
-
-    const sam = data.sam ?? {}
-    samCheckpoint.value = String(sam.checkpoint ?? 'sam3')
-    samDevice.value = sam.device === 'cpu' ? 'cpu' : 'cuda'
-    samMultimaskOutput.value = Boolean(sam.multimask_output)
-
-    const postprocess = data.postprocess ?? {}
-    postprocessEnableClose.value = Boolean(postprocess.enable_close ?? true)
-    postprocessCloseKernel.value = Number(postprocess.close_kernel ?? 5)
-    postprocessEnableDpSimplify.value = Boolean(postprocess.enable_dp_simplify ?? true)
-    postprocessEpsilonRatio.value = Number(postprocess.epsilon_ratio ?? 0.002)
-    postprocessMinAreaRatio.value = Number(postprocess.min_area_ratio ?? 0.0005)
-
-    const quality = data.quality
-    if (quality && typeof quality.threshold_review === 'number') {
-      qualityReviewThreshold.value = Number(quality.threshold_review)
-    }
-    qualityEnabled.value = Boolean(quality?.enable ?? true)
-    qualityOkThreshold.value = Number(quality?.threshold_ok ?? 0.8)
-    qualityUseLlmConfidence.value = Boolean(quality?.use_llm_confidence ?? true)
-    qualityUseSamScore.value = Boolean(quality?.use_sam_score ?? true)
-    qualityConsistencyCheck.value = Boolean(quality?.enable_consistency_check ?? false)
-
-    const evaluation = data.evaluation
-    const candidateDefaultSplit = String(evaluation?.split ?? 'val')
-    evaluationDefaultSplit.value =
-      candidateDefaultSplit === 'train' ? 'train' : candidateDefaultSplit === 'test' ? 'test' : 'val'
-    evaluationSplit.value = candidateDefaultSplit === 'test' ? 'test' : 'val'
-    evaluationIouThreshold.value = Number(evaluation?.iou_threshold ?? 0.5)
-    evaluationMaxSamplesText.value =
-      evaluation?.max_samples == null ? '' : String(evaluation.max_samples)
   } catch {
     // non-blocking
   }
+}
+
+function applySystemRuntimeSettings(data: Partial<SystemRuntimeSettings> | null | undefined) {
+  const payload = data ?? {}
+  systemSettingsMeta.value = (payload._meta ?? null) as SystemSettingsMeta | null
+
+  modelProfile.value = String(payload.model_profile ?? 'auto')
+
+  const llm = (payload.llm ?? {}) as Partial<SystemRuntimeSettings['llm']>
+  llmBaseModel.value = String(llm.base_model ?? 'qwen3-vl-2b')
+  llmAutoOrderText.value = Array.isArray(llm.auto_order) ? llm.auto_order.join(', ') : '2b, 4b, 8b'
+  llmMaxTokens.value = Number(llm.max_tokens ?? 2048)
+
+  const sam = (payload.sam ?? {}) as Partial<SystemRuntimeSettings['sam']>
+  samCheckpoint.value = String(sam.checkpoint ?? 'sam3')
+  samDevice.value = sam.device === 'cpu' ? 'cpu' : 'cuda'
+  samMultimaskOutput.value = Boolean(sam.multimask_output)
+
+  const postprocess = (payload.postprocess ?? {}) as Partial<SystemRuntimeSettings['postprocess']>
+  postprocessEnableClose.value = Boolean(postprocess.enable_close ?? true)
+  postprocessCloseKernel.value = Number(postprocess.close_kernel ?? 5)
+  postprocessEnableDpSimplify.value = Boolean(postprocess.enable_dp_simplify ?? true)
+  postprocessEpsilonRatio.value = Number(postprocess.epsilon_ratio ?? 0.002)
+  postprocessMinAreaRatio.value = Number(postprocess.min_area_ratio ?? 0.0005)
+
+  const quality = (payload.quality ?? {}) as Partial<SystemRuntimeSettings['quality']>
+  if (quality && typeof quality.threshold_review === 'number') {
+    qualityReviewThreshold.value = Number(quality.threshold_review)
+  }
+  qualityEnabled.value = Boolean(quality?.enable ?? true)
+  qualityOkThreshold.value = Number(quality?.threshold_ok ?? 0.8)
+  qualityUseLlmConfidence.value = Boolean(quality?.use_llm_confidence ?? true)
+  qualityUseSamScore.value = Boolean(quality?.use_sam_score ?? true)
+  qualityConsistencyCheck.value = Boolean(quality?.enable_consistency_check ?? false)
+
+  const evaluation = (payload.evaluation ?? {}) as Partial<SystemRuntimeSettings['evaluation']>
+  const candidateDefaultSplit = String(evaluation?.split ?? 'val')
+  evaluationDefaultSplit.value =
+    candidateDefaultSplit === 'train' ? 'train' : candidateDefaultSplit === 'test' ? 'test' : 'val'
+  evaluationSplit.value = candidateDefaultSplit === 'test' ? 'test' : 'val'
+  evaluationIouThreshold.value = Number(evaluation?.iou_threshold ?? 0.5)
+  evaluationMaxSamplesText.value = evaluation?.max_samples == null ? '' : String(evaluation.max_samples)
 }
 
 function onPickFiles(ev: Event) {
@@ -468,26 +542,15 @@ async function importDataset() {
 
 async function saveLabels() {
   labelsSaving.value = true
-  await patchProjectSettings({ labels: parseLabels(labelsText.value) }, { source: 'labels' })
+  await patchProjectSettings({ labels: parseLabels(labelsText.value) })
   labelsSaving.value = false
 }
 
-async function patchProjectSettings(
-  patch: Record<string, unknown>,
-  options: { source: 'labels' | 'runtime' }
-) {
+async function patchProjectSettings(patch: Record<string, unknown>) {
   error.value = ''
-  settingsMessage.value = ''
-  settingsChange.value = null
-  if (options.source === 'runtime') {
-    settingsSaving.value = true
-  }
 
   try {
-    const resp = await api.patch(`/api/projects/${projectId.value}/settings`, patch)
-    const payload = resp.data?.data ?? {}
-    settingsChange.value = (payload.change ?? null) as ProjectSettingsChange | null
-    settingsMessage.value = String(resp.data?.message ?? payload.change?.message ?? 'Saved settings.')
+    await api.patch(`/api/projects/${projectId.value}/settings`, patch)
     await fetchProjectSettings()
     await fetchImages()
   } catch (err: any) {
@@ -496,16 +559,17 @@ async function patchProjectSettings(
       : err?.message
         ? String(err.message)
         : String(err)
-  } finally {
-    if (options.source === 'runtime') {
-      settingsSaving.value = false
-    }
   }
 }
 
 async function saveRuntimeSettings() {
-  await patchProjectSettings(
-    {
+  error.value = ''
+  settingsMessage.value = ''
+  settingsChange.value = null
+  settingsSaving.value = true
+
+  try {
+    const resp = await api.patch('/api/system/settings', {
       model_profile: modelProfile.value,
       llm: {
         base_model: llmBaseModel.value.trim(),
@@ -537,9 +601,23 @@ async function saveRuntimeSettings() {
         iou_threshold: Number(evaluationIouThreshold.value),
         max_samples: parseOptionalInt(evaluationMaxSamplesText.value),
       },
-    },
-    { source: 'runtime' }
-  )
+    })
+    const payload = resp.data?.data ?? {}
+    settingsChange.value = (payload.change ?? null) as SettingsChange | null
+    settingsMessage.value = String(resp.data?.message ?? payload.change?.message ?? 'Saved settings.')
+    applySystemRuntimeSettings((payload.settings ?? null) as Partial<SystemRuntimeSettings> | null)
+    await fetchSystemConfig()
+    await fetchProjectSettings()
+    await fetchImages()
+  } catch (err: any) {
+    error.value = err?.response?.data?.message
+      ? String(err.response.data.message)
+      : err?.message
+        ? String(err.message)
+        : String(err)
+  } finally {
+    settingsSaving.value = false
+  }
 }
 
 async function activateProjectModel() {
@@ -568,7 +646,9 @@ async function fetchSystemConfig() {
   systemLoading.value = true
   try {
     const resp = await api.get('/api/system/config')
-    systemConfig.value = (resp.data?.data ?? null) as SystemConfig | null
+    const data = (resp.data?.data ?? null) as SystemConfig | null
+    systemConfig.value = data
+    applySystemRuntimeSettings(data?.settings)
   } catch (err: any) {
     error.value = err?.response?.data?.message
       ? String(err.response.data.message)
@@ -589,6 +669,7 @@ async function activateSystemProfile(profileName: string) {
     systemMessage.value = String(resp.data?.message ?? 'Profile switched.')
     await fetchSystemConfig()
     await fetchProjectSettings()
+    await fetchImages()
   } catch (err: any) {
     error.value = err?.response?.data?.message
       ? String(err.response.data.message)
@@ -602,7 +683,10 @@ async function activateSystemProfile(profileName: string) {
 
 async function fetchTaskStatus(taskId: string) {
   const resp = await api.get(`/api/tasks/${taskId}/status`)
-  const data = resp.data?.data
+  applyTaskPayload((resp.data?.data ?? null) as Record<string, unknown> | null)
+}
+
+function applyTaskPayload(data: Record<string, unknown> | null) {
   taskState.status = String(data?.status ?? '')
   taskState.progress = Number(data?.progress ?? 0)
   taskState.message = String(data?.message ?? '')
@@ -612,7 +696,59 @@ async function fetchTaskStatus(taskId: string) {
   }
   if (taskState.status === 'SUCCESS' || taskState.status === 'FAILURE') {
     stopPolling()
-    await fetchImages()
+    void fetchImages()
+  }
+}
+
+function taskWebSocketUrl(taskId: string): string {
+  const base = API_BASE_URL.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:').replace(/\/$/, '')
+  return `${base}/ws/tasks/${taskId}`
+}
+
+function startTaskPolling(taskId: string) {
+  if (pollTimer) clearInterval(pollTimer)
+  taskTransport.value = 'polling'
+  pollTimer = setInterval(() => {
+    if (!taskState.taskId) return
+    void fetchTaskStatus(taskId)
+  }, 700)
+}
+
+function connectTaskSocket(taskId: string) {
+  if (typeof WebSocket === 'undefined') {
+    startTaskPolling(taskId)
+    return
+  }
+
+  taskTransport.value = 'websocket'
+  const socket = new WebSocket(taskWebSocketUrl(taskId))
+  let opened = false
+  taskSocket = socket
+
+  socket.onopen = () => {
+    opened = true
+  }
+  socket.onmessage = (event) => {
+    try {
+      applyTaskPayload(JSON.parse(String(event.data ?? '{}')) as Record<string, unknown>)
+    } catch {
+      // keep transport fallback available
+    }
+  }
+  socket.onerror = () => {
+    if (!opened && taskSocket === socket) {
+      taskSocket = null
+      startTaskPolling(taskId)
+    }
+  }
+  socket.onclose = () => {
+    const shouldFallback = taskSocket === socket
+    if (shouldFallback) {
+      taskSocket = null
+    }
+    if (shouldFallback && !pollTimer && taskState.taskId === taskId && taskState.status !== 'SUCCESS' && taskState.status !== 'FAILURE') {
+      startTaskPolling(taskId)
+    }
   }
 }
 
@@ -629,16 +765,16 @@ async function startBatchAnnotate() {
     taskState.status = ''
     taskState.progress = 0
     taskState.message = ''
+    taskTransport.value = 'idle'
 
     const resp = await api.post(`/api/projects/${projectId.value}/annotate`, { only_pending: true })
     taskState.taskId = String(resp.data?.data?.task_id ?? '')
     if (!taskState.taskId) throw new Error('no task_id returned')
 
     await fetchTaskStatus(taskState.taskId)
-    pollTimer = setInterval(() => {
-      if (!taskState.taskId) return
-      void fetchTaskStatus(taskState.taskId)
-    }, 700)
+    if (taskState.status !== 'SUCCESS' && taskState.status !== 'FAILURE') {
+      connectTaskSocket(taskState.taskId)
+    }
   } catch (err: any) {
     error.value = err?.response?.data?.message
       ? String(err.response.data.message)
@@ -887,7 +1023,7 @@ watch(projectId, () => {
         >
           Batch Auto Annotate (M4)
         </button>
-        <div v-if="taskState.taskId" class="task-meta">
+        <div v-if="taskState.taskId" class="task-meta" data-testid="batch-task-meta">
           task={{ taskState.taskId.slice(0, 8) }} - {{ taskState.status }} - {{ taskState.progress }}%
         </div>
       </div>
@@ -895,8 +1031,9 @@ watch(projectId, () => {
         Save at least one label before starting auto annotation.
       </div>
       <div v-if="taskState.taskId" class="task">
-        <progress class="progress" :value="taskState.progress" max="100" />
-        <div class="hint mono">{{ taskState.message }}</div>
+        <div class="hint mono" data-testid="batch-task-transport">transport={{ taskTransport }}</div>
+        <progress class="progress" :value="taskState.progress" max="100" data-testid="batch-task-progress" />
+        <div class="hint mono" data-testid="batch-task-message">{{ taskState.message }}</div>
       </div>
     </div>
 
@@ -905,11 +1042,11 @@ watch(projectId, () => {
         <label class="label">M10</label>
         <div class="settings-headline">
           <div class="hint">
-            Runtime settings are persisted per project. Hot-reload fields affect new tasks immediately; reload-required fields need an explicit profile/model reload.
+            Runtime settings are persisted system-wide. Labels and LoRA activation stay project-specific. Hot-reload fields affect new tasks immediately; reload-required fields need an explicit profile/model reload.
           </div>
           <div class="hint mono">
             active-system=<span data-testid="active-system-profile">{{ settingsMeta?.active_system_profile ?? '-' }}</span>
-            · resolved-project=<span data-testid="resolved-project-profile">{{ settingsMeta?.resolved_project_profile ?? '-' }}</span>
+            · resolved-runtime=<span data-testid="resolved-project-profile">{{ systemSettingsMeta?.resolved_runtime_profile ?? '-' }}</span>
             · active-model=<span data-testid="project-active-model-tag">{{ activeModelTag }}</span>
           </div>
         </div>
@@ -936,11 +1073,13 @@ watch(projectId, () => {
           <div class="row wrap-row">
             <label class="label">Profile</label>
             <select v-model="modelProfile" class="input compact" data-testid="project-model-profile-select">
-              <option value="auto">auto</option>
-              <option value="fixed">fixed</option>
-              <option value="dev_low_resource">dev_low_resource</option>
-              <option value="test_real_stack">test_real_stack</option>
-              <option value="demo_prod">demo_prod</option>
+              <option
+                v-for="profile in systemSettingsMeta?.available_model_profiles ?? ['auto', 'fixed', 'dev_low_resource', 'test_real_stack', 'demo_prod']"
+                :key="profile"
+                :value="profile"
+              >
+                {{ profile }}
+              </option>
             </select>
             <input
               v-model="llmBaseModel"
@@ -1121,6 +1260,9 @@ watch(projectId, () => {
         Reload required:
         <span class="mono">{{ settingsChange?.reload_required_paths.join(', ') }}</span>
       </div>
+      <div v-if="systemSettingsMeta?.storage_path" class="hint mono">
+        system-settings={{ systemSettingsMeta.storage_path }}
+      </div>
       <div class="row wrap-row">
         <button
           class="btn primary"
@@ -1129,7 +1271,7 @@ watch(projectId, () => {
           :disabled="settingsSaving"
           @click="saveRuntimeSettings"
         >
-          {{ settingsSaving ? 'Saving...' : 'Save Runtime Settings' }}
+          {{ settingsSaving ? 'Saving...' : 'Save System Runtime Settings' }}
         </button>
       </div>
     </div>
@@ -1248,7 +1390,7 @@ watch(projectId, () => {
             :disabled="!canStartFinetune"
             @click="startFinetune"
           >
-            {{ finetuneStarting ? 'Starting...' : 'Start Finetune (M8)' }}
+            {{ finetuneStarting ? 'Starting...' : 'Start Finetune' }}
           </button>
           <button
             v-if="latestFinetuneJob && latestFinetuneJob.status === 'done' && !latestFinetuneJob.is_active"
@@ -1271,6 +1413,8 @@ watch(projectId, () => {
         <div class="task-meta" data-testid="finetune-status">
           job={{ latestFinetuneJob.id }} - {{ latestFinetuneJob.status }} - {{ latestFinetuneJob.model_tag }}
         </div>
+        <div class="hint mono">runner={{ String(latestFinetuneJob.config?.runner_backend ?? '-') }}</div>
+        <div class="hint mono">{{ latestFinetuneMetricText }}</div>
         <div class="hint mono">dataset={{ latestFinetuneJob.dataset_path ?? '-' }}</div>
         <div class="hint mono">artifact={{ latestFinetuneJob.lora_path ?? '-' }}</div>
         <div class="hint mono">log={{ latestFinetuneJob.log_path ?? '-' }}</div>

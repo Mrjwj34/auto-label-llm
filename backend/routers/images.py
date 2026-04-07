@@ -15,17 +15,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.api import AppError, ok
-from backend.database import get_session_factory
 from backend.deps import get_db
 from backend.models.annotation import Annotation
 from backend.models.image import Image
 from backend.models.project import Project
-from backend.services.auto_annotator import generate_auto_annotations, replace_auto_annotations
 from backend.services.postprocess import apply_project_postprocess
 from backend.services.project_settings import get_project_labels, load_project_settings
 from backend.services.quality_service import refresh_image_quality
 from backend.services.sam_service import SAMService
-from backend.tasks.task_manager import TaskContext, get_task_manager
+from backend.tasks.task_manager import get_task_manager
+from backend.utils.gpu_lock import GPUBusyError
 from backend.utils.storage import resolve_path, save_project_image_bytes
 
 
@@ -286,6 +285,12 @@ def _project_sam_kwargs(project: Project | None) -> dict[str, Any]:
     }
 
 
+def _interactive_sam_kwargs(project: Project | None) -> dict[str, Any]:
+    payload = _project_sam_kwargs(project)
+    payload["lock_timeout"] = 0.0
+    return payload
+
+
 @router.get("/images/{image_id}/annotations")
 def list_annotations(image_id: int, db: Session = Depends(get_db)):
     image = db.get(Image, image_id)
@@ -482,34 +487,9 @@ def annotate_image(image_id: int, db: Session = Depends(get_db)):
         raise AppError(400, "project labels are empty; configure at least one label before auto annotation")
 
     manager = get_task_manager()
-    session_factory = get_session_factory()
-
-    def _job(ctx: TaskContext) -> None:
-        ctx.set_progress(5, "queued")
-        with session_factory() as task_db:
-            img = task_db.get(Image, image_id)
-            if img is None:
-                raise RuntimeError("image not found")
-            task_project = task_db.get(Project, img.project_id)
-            if task_project is None:
-                raise RuntimeError("project not found")
-            img.status = "annotating"
-            task_db.add(img)
-            task_db.commit()
-
-        with session_factory() as task_db:
-            img = task_db.get(Image, image_id)
-            if img is not None:
-                task_project = task_db.get(Project, img.project_id)
-                if task_project is None:
-                    raise RuntimeError("project not found")
-                ctx.set_progress(40, "generating bbox")
-                result = generate_auto_annotations(task_project, img, db=task_db)
-                replace_auto_annotations(task_db, img, result)
-                img.status = "done"
-                task_db.add(img)
-                task_db.commit()
-                ctx.set_progress(95, f"generated {len(result.annotations)} boxes via {result.runtime_label()}")
-
-    task_id = manager.create(_job)
+    task_id = manager.create(
+        kind="image_annotate",
+        payload={"image_id": image_id},
+        queue="annotation",
+    )
     return ok({"task_id": task_id})

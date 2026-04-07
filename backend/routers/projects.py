@@ -16,6 +16,7 @@ from backend.deps import get_db
 from backend.models.image import Image
 from backend.models.project import Project
 from backend.services.auto_annotator import generate_auto_annotations, replace_auto_annotations
+from backend.services.annotation_tasks import resolve_project_image_ids
 from backend.services.dataset_io import export_project_dataset, import_project_dataset
 from backend.services.project_settings import get_project_labels, load_stored_project_settings, merge_project_settings
 from backend.services.settings_service import (
@@ -24,7 +25,7 @@ from backend.services.settings_service import (
     settings_change_summary,
 )
 from backend.services.vllm_client import activate_project_model_tag, resolve_inference_route
-from backend.tasks.task_manager import TaskContext, get_task_manager
+from backend.tasks.task_manager import get_task_manager
 from backend.utils.storage import delete_project_dirs, ensure_project_dirs
 
 
@@ -158,80 +159,21 @@ def annotate_project(project_id: int, payload: ProjectAnnotateIn, db: Session = 
     if not get_project_labels(project):
         raise AppError(400, "project labels are empty; configure at least one label before auto annotation")
 
-    image_ids: list[int]
-    if payload.image_ids:
-        rows = db.execute(
-            select(Image.id).where(Image.project_id == project_id, Image.id.in_(payload.image_ids))
-        ).all()
-        image_ids = [int(r[0]) for r in rows]
-        if len(image_ids) != len(set(payload.image_ids)):
-            raise AppError(400, "some image_ids do not belong to the project")
-    else:
-        q = select(Image.id).where(Image.project_id == project_id)
-        if payload.only_pending:
-            q = q.where(Image.status == "pending")
-        image_ids = [int(r[0]) for r in db.execute(q).all()]
+    try:
+        image_ids = resolve_project_image_ids(
+            project_id=project_id,
+            image_ids=payload.image_ids,
+            only_pending=payload.only_pending,
+        )
+    except RuntimeError as exc:
+        raise AppError(400, str(exc)) from exc
 
     manager = get_task_manager()
-    session_factory = get_session_factory()
-
-    def _job(ctx: TaskContext) -> None:
-        total = len(image_ids)
-        if total == 0:
-            ctx.set_progress(100, "no images to annotate")
-            return
-
-        success_count = 0
-        failed_count = 0
-        for idx, image_id in enumerate(image_ids, start=1):
-            ctx.set_progress(int((idx - 1) / total * 100), f"image {idx}/{total}")
-
-            try:
-                with session_factory() as task_db:
-                    img = task_db.get(Image, image_id)
-                    if img is None:
-                        continue
-                    task_project = task_db.get(Project, img.project_id)
-                    if task_project is None:
-                        raise RuntimeError("project not found")
-
-                    img.status = "annotating"
-                    task_db.add(img)
-                    task_db.commit()
-
-                    result = generate_auto_annotations(task_project, img, db=task_db)
-                    replace_auto_annotations(task_db, img, result)
-                    img.status = "done"
-                    task_db.add(img)
-                    task_db.commit()
-
-                    success_count += 1
-                    provider_text = f" via {result.runtime_label()}"
-            except Exception as exc:  # noqa: BLE001
-                failed_count += 1
-                provider_text = ""
-                with session_factory() as task_db:
-                    img = task_db.get(Image, image_id)
-                    if img is not None:
-                        img.status = "error"
-                        task_db.add(img)
-                        task_db.commit()
-                ctx.set_progress(int(idx / total * 100), f"image {idx}/{total} failed: {exc}")
-                continue
-
-            ctx.set_progress(
-                int(idx / total * 100),
-                f"image {idx}/{total} done ({len(result.annotations)} boxes{provider_text})",
-            )
-
-        summary = f"completed {success_count}/{total} images"
-        if failed_count:
-            summary += f", failed {failed_count}"
-        ctx.set_progress(100, summary)
-        if failed_count == total and total > 0:
-            raise RuntimeError(summary)
-
-    task_id = manager.create(_job)
+    task_id = manager.create(
+        kind="project_annotate",
+        payload={"project_id": project_id, "image_ids": image_ids},
+        queue="annotation",
+    )
     return ok({"task_id": task_id, "total": len(image_ids)})
 
 

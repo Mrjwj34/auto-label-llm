@@ -178,6 +178,8 @@ def activate_project_model_tag(project: Project, model_tag: str, db: Session) ->
 
     route = resolve_inference_route(project, requested_model_tag=cleaned_tag, db=db)
     stored = load_stored_project_settings(project)
+    previous_tag = str(stored.get("active_model_tag") or "base").strip() or "base"
+    runtime_sync = sync_vllm_runtime(project, previous_model_tag=previous_tag, target_route=route, db=db)
     stored["active_model_tag"] = route.effective_model_tag
     project.config = json.dumps(stored, ensure_ascii=False)
     db.add(project)
@@ -187,6 +189,7 @@ def activate_project_model_tag(project: Project, model_tag: str, db: Session) ->
     return {
         "active_model_tag": route.effective_model_tag,
         "route": route.to_dict(),
+        "runtime_sync": runtime_sync,
         "message": f"Activated {route.short_label()}",
     }
 
@@ -417,3 +420,99 @@ def _chat_completions_url(base_url: str) -> str:
     if root.endswith("/v1"):
         return f"{root}/chat/completions"
     return f"{root}/v1/chat/completions"
+
+
+def sync_vllm_runtime(
+    project: Project,
+    *,
+    previous_model_tag: str,
+    target_route: InferenceRoute,
+    db: Session | None = None,
+) -> dict[str, Any]:
+    settings = get_settings()
+    if not settings.vllm_enable_runtime_lora_update:
+        return {
+            "status": "skipped",
+            "mode": "disabled",
+            "actions": [],
+            "message": "Runtime LoRA sync is disabled; only project routing metadata was updated.",
+        }
+
+    if settings.annotation_backend != "openai_compatible":
+        return {
+            "status": "skipped",
+            "mode": "annotation_backend",
+            "actions": [],
+            "message": "Runtime LoRA sync requires ANNOTATION_BACKEND=openai_compatible.",
+        }
+
+    actions: list[dict[str, Any]] = []
+    previous_tag = str(previous_model_tag or "base").strip() or "base"
+
+    if previous_tag.startswith("lora:") and previous_tag != target_route.effective_model_tag:
+        previous_route: InferenceRoute | None
+        try:
+            previous_route = resolve_inference_route(project, requested_model_tag=previous_tag, db=db)
+        except AppError:
+            previous_route = None
+        if previous_route is not None and previous_route.route_kind == "lora":
+            _post_vllm_runtime(
+                "/v1/unload_lora_adapter",
+                {"lora_name": previous_route.effective_model_tag},
+            )
+            actions.append({"action": "unload", "model_tag": previous_route.effective_model_tag})
+
+    if target_route.route_kind == "lora":
+        if not target_route.adapter_path:
+            raise AppError(400, f"LoRA route {target_route.effective_model_tag} is missing adapter_path")
+        _post_vllm_runtime(
+            "/v1/load_lora_adapter",
+            {
+                "lora_name": target_route.effective_model_tag,
+                "lora_path": resolve_path(target_route.adapter_path).as_posix(),
+                "base_model_name": target_route.base_model_name,
+                "load_inplace": True,
+            },
+        )
+        actions.append(
+            {
+                "action": "load",
+                "model_tag": target_route.effective_model_tag,
+                "adapter_path": target_route.adapter_path,
+            }
+        )
+
+    return {
+        "status": "synced",
+        "mode": "vllm_runtime_api",
+        "actions": actions,
+        "message": "Runtime LoRA sync finished.",
+    }
+
+
+def _post_vllm_runtime(path: str, payload: dict[str, Any]) -> None:
+    settings = get_settings()
+    timeout = max(5.0, float(settings.llm_request_timeout_seconds))
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            response = client.post(_vllm_api_url(settings.vllm_base_url, path), json=payload, headers=_vllm_headers())
+            response.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        raise AppError(502, f"vLLM runtime sync failed: {exc}") from exc
+
+
+def _vllm_headers() -> dict[str, str]:
+    settings = get_settings()
+    headers = {"Content-Type": "application/json"}
+    api_key = settings.vllm_api_key.strip()
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
+
+
+def _vllm_api_url(base_url: str, path: str) -> str:
+    root = base_url.rstrip("/")
+    normalized_path = path if path.startswith("/") else f"/{path}"
+    if root.endswith("/v1") and normalized_path.startswith("/v1/"):
+        normalized_path = normalized_path[3:]
+    return f"{root}{normalized_path}"

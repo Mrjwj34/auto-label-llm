@@ -19,6 +19,9 @@ from backend.routers.images import router as images_router
 from backend.routers.projects import router as projects_router
 from backend.routers.system import router as system_router
 from backend.routers.tasks import router as tasks_router
+from backend.services.redis_client import ping_redis
+from backend.tasks.job_handlers import TASK_HANDLERS
+from backend.tasks.worker import RedisTaskWorker
 
 
 def _json_safe(value):  # type: ignore[no-untyped-def]
@@ -37,7 +40,13 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):  # noqa: ANN001
         init_db()
+        ping_redis()
+        worker: RedisTaskWorker | None = None
+        if settings.task_embedded_worker:
+            worker = RedisTaskWorker(handlers=TASK_HANDLERS).start_in_background()
         yield
+        if worker is not None:
+            worker.stop()
 
     app = FastAPI(title="Auto Labeling System", version="0.1.0", lifespan=lifespan)
 

@@ -179,6 +179,10 @@ def openai_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
     monkeypatch.setenv("APP_PROFILE", "test_real_stack")
     monkeypatch.setenv("ANNOTATION_BACKEND", "openai_compatible")
+    monkeypatch.setenv("REDIS_URL", f"fakeredis://{root_dir.as_posix()}/0")
+    monkeypatch.setenv("TASK_EMBEDDED_WORKER", "true")
+    monkeypatch.setenv("TASK_WORKER_CONCURRENCY", "1")
+    monkeypatch.setenv("FINETUNE_BACKEND", "mock")
     monkeypatch.setenv("VLLM_BASE_URL", "http://127.0.0.1:8001")
     monkeypatch.setenv("VLLM_MODEL_NAME", "qwen3-vl-4b")
     monkeypatch.setenv("LLM_REQUEST_TIMEOUT_SECONDS", "5")
@@ -202,11 +206,10 @@ def test_openai_annotation_uses_profile_resolved_model_and_records_inference_met
     FakeVLLMClient.reset(payloads=[_default_vllm_payload(bbox=[0.12, 0.2, 0.66, 0.8])])
 
     project_id = _create_project(openai_client, name="m11-openai")
-    patch = openai_client.patch(
-        f"/api/projects/{project_id}/settings",
-        json={"labels": ["crack"], "model_profile": "demo_prod"},
-    )
-    assert patch.status_code == 200
+    labels_patch = openai_client.patch(f"/api/projects/{project_id}/settings", json={"labels": ["crack"]})
+    assert labels_patch.status_code == 200
+    system_patch = openai_client.patch("/api/system/settings", json={"model_profile": "demo_prod"})
+    assert system_patch.status_code == 200
 
     image_id = _upload_image(openai_client, project_id, "demo.png")
     annotate = openai_client.post(f"/api/images/{image_id}/annotate")
@@ -339,3 +342,46 @@ def test_project_model_activation_switches_base_and_lora_and_evaluation_uses_act
     assert payload["images"][0]["image_id"] == val_image_id
     assert payload["images"][0]["inference"]["provider"] == "openai_compatible"
     assert payload["images"][0]["inference"]["request_model_name"] == f"lora:{job_id}"
+
+
+def test_project_model_activation_can_sync_vllm_runtime_lora(openai_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("VLLM_ENABLE_RUNTIME_LORA_UPDATE", "true")
+    get_settings.cache_clear()
+    monkeypatch.setattr("backend.services.vllm_client.httpx.Client", FakeVLLMClient)
+    FakeVLLMClient.reset()
+
+    project_id = _create_project(openai_client, name="m14-runtime-sync")
+    patch = openai_client.patch(f"/api/projects/{project_id}/settings", json={"labels": ["crack"]})
+    assert patch.status_code == 200
+
+    train_image_id = _upload_image(openai_client, project_id, "train.png")
+    _create_manual_confirmed_annotation(openai_client, train_image_id)
+
+    start = openai_client.post("/api/finetune/start", json={"project_id": project_id})
+    assert start.status_code == 200
+    job_id = int(start.json()["data"]["job_id"])
+
+    finetune_status = _poll_finetune_job(openai_client, job_id)
+    assert finetune_status["status"] == "done"
+
+    activate_lora = openai_client.post(
+        f"/api/projects/{project_id}/models/activate",
+        json={"model_tag": f"lora:{job_id}"},
+    )
+    assert activate_lora.status_code == 200
+    runtime_sync = activate_lora.json()["data"]["activation"]["runtime_sync"]
+    assert runtime_sync["status"] == "synced"
+    assert runtime_sync["actions"][0]["action"] == "load"
+
+    activate_base = openai_client.post(
+        f"/api/projects/{project_id}/models/activate",
+        json={"model_tag": "base"},
+    )
+    assert activate_base.status_code == 200
+    base_sync = activate_base.json()["data"]["activation"]["runtime_sync"]
+    assert base_sync["status"] == "synced"
+    assert base_sync["actions"][0]["action"] == "unload"
+
+    urls = [entry["url"] for entry in FakeVLLMClient.requests]
+    assert any(url.endswith("/v1/load_lora_adapter") for url in urls)
+    assert any(url.endswith("/v1/unload_lora_adapter") for url in urls)
