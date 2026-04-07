@@ -68,9 +68,9 @@
 | M10 | 配置中心、热更新与环境切换 | 项目配置真正驱动推理/后处理/评估，并支持一键切换测试/生产档位 | ✅ | 26efec0 |
 | M11 | 真实 LLM 推理与模型切换 | vLLM/OpenAI-compatible 真接入 + `active_model_tag` 真正生效 | ✅ | 233218f |
 | M12 | 真实 SAM3 与后处理 | 真实 mask/polygon + `set_image` 缓存 + OpenCV 后处理 | ✅ | e550e40 |
-| M13 | 任务基础设施升级 | Redis / WebSocket / GPU 锁升级当前轻量任务骨架，Celery 视需要补齐 | 🟡 | - |
+| M13 | 任务基础设施升级 | Redis / WebSocket / GPU 锁升级当前轻量任务骨架，Celery 视需要补齐 | ✅ | - |
 | M14 | 真实 LoRA 微调闭环 | LLaMA-Factory 真训练 + LoRA 激活后真正参与推理 | 🟡 | - |
-| M15 | 评估系统增强与对比看板 | mask 指标、run 对比、失败案例分析、性能统计 | ⬜ | - |
+| M15 | 评估系统增强与对比看板 | mask 指标、run 对比、失败案例分析、性能统计 | ✅ | - |
 | M16 | 一键启动与演示脚本 | 一条命令启动所有服务与外部依赖 | ⬜ | - |
 
 > 说明：原 M10 “一键启动与演示脚本”顺延为 M16。M10～M15 用于补齐当前实现与 `design_doc.md` 之间的差距，目标是最终与设计文档一致。
@@ -389,5 +389,6 @@
 | 2026-04-03 | M12 | ⬜ → 🟡 | e550e40 | `.venv\Scripts\python.exe -m compileall backend tests`、`.venv\Scripts\python.exe -m pytest -q`、`cd frontend && npm run build`、`node` 临时 Playwright 浏览器回归 | ⏳ 待验收 | SAM3 优先 + stub 回退的真实 mask/polygon 管线、掩码落盘、OpenCV/降级后处理、导入导出与点纠错贯通 |
 | 2026-04-03 | M12 | 🟡 → ✅ | d8a69cb | `.venv\Scripts\python.exe -m compileall backend tests`、`.venv\Scripts\python.exe -m pytest -q`、`cd frontend && npm run build`、`node` 临时 Playwright 浏览器回归 | ✅ 通过 | M12 人工验收通过，后续补做 Linux 真实栈补环境脚本与 SAM3 本地权重自动发现强化 |
 | 2026-04-03 | M13 | ⬜ → 🟡 | - | `.venv\Scripts\python.exe -m compileall backend tests`、`.venv\Scripts\python.exe -m pytest -q`、`cd frontend && npm run build`、`node output\playwright\m13\node\e2e-m13.cjs` | ⏳ 待验收 | 系统级运行时设置入口修正 + `WS /ws/tasks/{task_id}` 首阶段落地，前端优先走 WebSocket 并保留轮询回退 |
-| 2026-04-07 | M13 | 🟡 → 🟡 | - | `.venv\Scripts\python.exe scripts\verify_m13_real_redis.py --redis-url redis://127.0.0.1:6379/15 --flush-redis-db` | ✅ 真实 Redis + 独立 worker + 浏览器回归通过 | 当前 Redis 任务骨架已完成分进程联调验证，后续是否引入 Celery 单独在 M13 收尾时决策 |
-| 2026-04-07 | M14 | ⬜ → 🟡 | - | `.venv\Scripts\python.exe -m compileall backend tests scripts`、`.venv\Scripts\python.exe -m pytest -q`、`cd frontend && npm run build`、`.venv\Scripts\python.exe scripts\verify_m14_browser.py --redis-url redis://127.0.0.1:6379/14 --flush-redis-db` | ✅ 后端测试 + 浏览器回归通过 | 真实 LLaMA-Factory subprocess 入口、metrics 暴露、LoRA runtime API hook 与可复跑浏览器验证脚本已落地；真实训练效果仍待 `test_real_stack` 验收 |
+| 2026-04-07 | M13 | 🟡 → ✅ | - | `.venv\Scripts\python.exe scripts\verify_m13_real_redis.py --redis-url redis://127.0.0.1:6380/15 --flush-redis-db` | ✅ 真实 Redis + 独立 worker + 浏览器回归通过 | 当前 Redis 任务骨架已完成分进程联调验证；结合本机算力与现有任务抽象，M13 阶段先不额外引入 Celery |
+| 2026-04-07 | M14 | ⬜ → 🟡 | - | `.venv\Scripts\python.exe -m compileall backend tests scripts`、`.venv\Scripts\python.exe -m pytest -q`、`cd frontend && npm run build`、`.venv\Scripts\python.exe scripts\verify_m14_browser.py --redis-url redis://127.0.0.1:6380/14 --flush-redis-db` | ✅ 后端测试 + 浏览器回归通过 | 真实 LLaMA-Factory subprocess 入口、metrics 暴露、LoRA runtime API hook 与可复跑浏览器验证脚本已落地；真实训练效果仍待 `test_real_stack` 验收 |
+| 2026-04-07 | M15 | ⬜ → ✅ | - | `.venv\Scripts\python.exe -m compileall backend tests scripts`、`.venv\Scripts\python.exe -m pytest -q`、`cd frontend && npm run build`、Playwright MCP 浏览器回归（两次 evaluation compare + failure sample 面板） | ✅ 代码测试 + 浏览器回归通过 | 已补齐 `mIoU_mask / Dice`、run compare API、失败样本摘要、性能统计与前端对比看板，达到本地验收条件 |

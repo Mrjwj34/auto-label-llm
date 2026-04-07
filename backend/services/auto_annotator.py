@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -33,6 +34,7 @@ class AutoAnnotationResult:
     requested_backend: str
     fallback_used: bool = False
     warning: str | None = None
+    runtime: dict[str, Any] | None = None
 
     def metadata(self) -> dict[str, Any]:
         payload = self.route.to_dict()
@@ -40,6 +42,9 @@ class AutoAnnotationResult:
         payload["requested_backend"] = self.requested_backend
         payload["fallback_used"] = self.fallback_used
         payload["warning"] = self.warning
+        payload["annotation_count"] = len(self.annotations)
+        if isinstance(self.runtime, dict):
+            payload.update(self.runtime)
         return payload
 
     def runtime_label(self) -> str:
@@ -134,15 +139,24 @@ def _attach_segmentation_shapes(
     annotations: list[GeneratedAnnotation],
     *,
     project_settings: dict[str, Any],
-) -> list[GeneratedAnnotation]:
+) -> tuple[list[GeneratedAnnotation], dict[str, Any]]:
     if project.task_type != "segmentation":
-        return annotations
+        return annotations, {
+            "sam_calls": 0,
+            "sam_ms": None,
+            "postprocess_ms": None,
+            "segmentation_ms": None,
+        }
 
     sam = SAMService()
     sam_settings = project_settings.get("sam", {}) if isinstance(project_settings.get("sam"), dict) else {}
     sam_lock_timeout = float(get_settings().sam_lock_timeout_seconds)
+    segmentation_started = time.perf_counter()
+    sam_ms = 0.0
+    postprocess_ms = 0.0
     enriched: list[GeneratedAnnotation] = []
     for annotation in annotations:
+        sam_started = time.perf_counter()
         prediction = sam.predict_polygon(
             image,
             annotation.bbox,
@@ -151,6 +165,8 @@ def _attach_segmentation_shapes(
             multimask_output=bool(sam_settings.get("multimask_output", False)),
             lock_timeout=sam_lock_timeout,
         )
+        sam_ms += (time.perf_counter() - sam_started) * 1000.0
+        postprocess_started = time.perf_counter()
         processed = apply_project_postprocess(
             project,
             image,
@@ -159,6 +175,7 @@ def _attach_segmentation_shapes(
             provider=prediction.provider,
             score=prediction.score,
         )
+        postprocess_ms += (time.perf_counter() - postprocess_started) * 1000.0
         enriched.append(
             GeneratedAnnotation(
                 label=annotation.label,
@@ -168,7 +185,12 @@ def _attach_segmentation_shapes(
                 mask_path=processed.mask_path,
             )
         )
-    return enriched
+    return enriched, {
+        "sam_calls": len(annotations),
+        "sam_ms": round(sam_ms, 2),
+        "postprocess_ms": round(postprocess_ms, 2),
+        "segmentation_ms": round((time.perf_counter() - segmentation_started) * 1000.0, 2),
+    }
 
 
 def generate_auto_annotations(
@@ -179,6 +201,7 @@ def generate_auto_annotations(
     requested_model_tag: str | None = None,
     project_settings: dict[str, Any] | None = None,
 ) -> AutoAnnotationResult:
+    total_started = time.perf_counter()
     labels = get_project_labels(project)
     if not labels:
         raise ValueError("project labels are empty; configure at least one label before auto annotation")
@@ -196,6 +219,7 @@ def generate_auto_annotations(
 
     if backend_name == "openai_compatible":
         try:
+            llm_started = time.perf_counter()
             annotations = _openai_compatible_annotations(
                 project,
                 image,
@@ -203,7 +227,8 @@ def generate_auto_annotations(
                 route=route,
                 project_settings=resolved_settings,
             )
-            annotations = _attach_segmentation_shapes(
+            llm_ms = round((time.perf_counter() - llm_started) * 1000.0, 2)
+            annotations, segmentation_runtime = _attach_segmentation_shapes(
                 project,
                 image,
                 annotations,
@@ -214,12 +239,17 @@ def generate_auto_annotations(
                 annotations=annotations,
                 route=route,
                 requested_backend=backend_name,
+                runtime={
+                    "llm_ms": llm_ms,
+                    "total_ms": round((time.perf_counter() - total_started) * 1000.0, 2),
+                    **segmentation_runtime,
+                },
             )
         except Exception as exc:
             warning = str(exc)
 
     annotations = _stub_annotations(image, labels, route=route)
-    annotations = _attach_segmentation_shapes(
+    annotations, segmentation_runtime = _attach_segmentation_shapes(
         project,
         image,
         annotations,
@@ -232,6 +262,11 @@ def generate_auto_annotations(
         requested_backend=backend_name,
         fallback_used=backend_name == "openai_compatible",
         warning=warning,
+        runtime={
+            "llm_ms": None,
+            "total_ms": round((time.perf_counter() - total_started) * 1000.0, 2),
+            **segmentation_runtime,
+        },
     )
 
 

@@ -9,6 +9,7 @@ from backend.deps import get_db
 from backend.models.evaluation_run import EvaluationRun
 from backend.models.project import Project
 from backend.services.evaluation_service import (
+    compare_evaluation_runs,
     create_evaluation_run,
     evaluation_run_to_dict,
     list_project_evaluations,
@@ -58,6 +59,11 @@ def get_evaluation_report(run_id: int, db: Session = Depends(get_db)):
     if report is None:
         raise AppError(404, "evaluation report not found")
     return ok(report)
+
+
+@router.get("/evaluations/{run_id}/compare")
+def get_evaluation_comparison(run_id: int, baseline_run_id: int | None = None, db: Session = Depends(get_db)):
+    return ok(compare_evaluation_runs(run_id, baseline_run_id=baseline_run_id, db=db))
 
 
 @router.get("/projects/{project_id}/evaluations")

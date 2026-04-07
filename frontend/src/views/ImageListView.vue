@@ -59,6 +59,90 @@ type EvaluationRunRow = {
   config: Record<string, unknown> | null
 }
 
+type EvaluationDeltaValue = {
+  current: number | null
+  baseline: number | null
+  delta: number | null
+}
+
+type EvaluationFailureSample = {
+  image_id: number
+  filename: string
+  split: string
+  tp: number
+  fp: number
+  fn: number
+  error_count: number
+  precision: number | null
+  recall: number | null
+  f1: number | null
+  miou_bbox: number | null
+  miou_mask: number | null
+  dice: number | null
+  unmatched_prediction_labels: string[]
+  unmatched_ground_truth_labels: string[]
+  inference_total_ms: number | null
+}
+
+type EvaluationComparisonImageChange = {
+  image_id: number
+  filename: string | null
+  split: string | null
+  current: {
+    f1: number | null
+    fp: number
+    fn: number
+    error_count: number
+    miou_bbox: number | null
+    miou_mask: number | null
+    dice: number | null
+  }
+  baseline: {
+    f1: number | null
+    fp: number
+    fn: number
+    error_count: number
+    miou_bbox: number | null
+    miou_mask: number | null
+    dice: number | null
+  }
+  delta: {
+    error_count: number | null
+    f1: number | null
+    miou_bbox: number | null
+  }
+}
+
+type EvaluationReport = {
+  run_id: number
+  project_id: number
+  split: string
+  model_tag: string
+  metrics: Record<string, unknown>
+  performance: Record<string, unknown> | null
+  summary:
+    | {
+        perfect_images?: number
+        images_with_failures?: number
+        failure_samples?: EvaluationFailureSample[]
+      }
+    | null
+}
+
+type EvaluationComparison = {
+  current_run: EvaluationRunRow
+  baseline_run: EvaluationRunRow
+  delta: {
+    metrics: Record<string, EvaluationDeltaValue>
+    performance: Record<string, EvaluationDeltaValue>
+  }
+  per_label: Record<string, Record<string, EvaluationDeltaValue>>
+  current_failure_samples?: EvaluationFailureSample[]
+  baseline_failure_samples?: EvaluationFailureSample[]
+  top_regressions?: EvaluationComparisonImageChange[]
+  top_improvements?: EvaluationComparisonImageChange[]
+}
+
 type ProjectSettingsMeta = {
   project_editable_paths: string[]
   active_system_profile: string
@@ -236,10 +320,15 @@ const latestFinetuneMetricText = computed(() => {
 })
 
 const evaluationSplit = ref<'val' | 'test'>('val')
+const evaluationModelTag = ref('base')
 const evaluationRuns = ref<EvaluationRunRow[]>([])
 const evaluationStarting = ref(false)
 const evaluationLoading = ref(false)
 const evaluationMessage = ref('')
+const evaluationReport = ref<EvaluationReport | null>(null)
+const evaluationComparison = ref<EvaluationComparison | null>(null)
+const evaluationComparisonLoading = ref(false)
+const evaluationBaselineRunId = ref('')
 const latestEvaluationRun = computed(() => evaluationRuns.value[0] ?? null)
 const canStartEvaluation = computed(
   () => !evaluationStarting.value && !['pending', 'running'].includes(latestEvaluationRun.value?.status ?? '')
@@ -262,6 +351,48 @@ const latestEvaluationInferenceText = computed(() => {
   const modelTag = String(payload.effective_model_tag ?? payload.requested_model_tag ?? latestEvaluationRun.value?.model_tag ?? '-')
   const modelName = String(payload.request_model_name ?? payload.base_model_name ?? '-')
   return `route=${modelTag} -> ${modelName}`
+})
+const availableBaselineEvaluationRuns = computed(() =>
+  evaluationRuns.value.filter((run) => run.status === 'done' && run.id !== latestEvaluationRun.value?.id)
+)
+const latestEvaluationFailureSamples = computed(() => {
+  const rows = evaluationReport.value?.summary?.failure_samples
+  return Array.isArray(rows) ? rows : []
+})
+const evaluationComparisonMetricRows = computed(() => {
+  const metrics = evaluationComparison.value?.delta.metrics ?? {}
+  return [
+    { key: 'precision', label: 'Precision', entry: metrics.precision ?? null, digits: 4 },
+    { key: 'recall', label: 'Recall', entry: metrics.recall ?? null, digits: 4 },
+    { key: 'f1', label: 'F1', entry: metrics.f1 ?? null, digits: 4 },
+    { key: 'miou_bbox', label: 'mIoU bbox', entry: metrics.miou_bbox ?? null, digits: 4 },
+    { key: 'miou_mask', label: 'mIoU mask', entry: metrics.miou_mask ?? null, digits: 4 },
+    { key: 'dice', label: 'Dice', entry: metrics.dice ?? null, digits: 4 },
+  ].filter((row) => row.entry !== null)
+})
+const evaluationComparisonPerformanceRows = computed(() => {
+  const metrics = evaluationComparison.value?.delta.performance ?? {}
+  return [
+    { key: 'avg_total_ms', label: 'Avg total ms', entry: metrics.avg_total_ms ?? null, digits: 2 },
+    { key: 'p95_total_ms', label: 'P95 total ms', entry: metrics.p95_total_ms ?? null, digits: 2 },
+    { key: 'avg_llm_ms', label: 'Avg LLM ms', entry: metrics.avg_llm_ms ?? null, digits: 2 },
+    { key: 'avg_sam_ms', label: 'Avg SAM ms', entry: metrics.avg_sam_ms ?? null, digits: 2 },
+    { key: 'avg_postprocess_ms', label: 'Avg post ms', entry: metrics.avg_postprocess_ms ?? null, digits: 2 },
+  ].filter((row) => row.entry !== null)
+})
+const evaluationPerLabelRows = computed(() => {
+  const labels = evaluationComparison.value?.per_label ?? {}
+  return Object.entries(labels)
+    .map(([label, metrics]) => ({
+      label,
+      entry: metrics.f1 ?? null,
+    }))
+    .filter((row) => row.entry !== null)
+    .sort((left, right) => {
+      const rightDelta = right.entry?.delta ?? Number.NEGATIVE_INFINITY
+      const leftDelta = left.entry?.delta ?? Number.NEGATIVE_INFINITY
+      return rightDelta - leftDelta
+    })
 })
 
 const taskState = reactive({
@@ -348,6 +479,38 @@ function parseOptionalInt(text: string): number | null {
 function formatQuality(score: number | null): string {
   if (score == null) return 'unscored'
   return score.toFixed(3)
+}
+
+function metricNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function formatMetric(value: unknown, digits = 4): string {
+  const numeric = metricNumber(value)
+  if (numeric == null) return '-'
+  return numeric.toFixed(digits)
+}
+
+function formatMetricCompact(value: unknown, digits = 4): string {
+  const numeric = metricNumber(value)
+  if (numeric == null) return '-'
+  return digits <= 2 ? numeric.toFixed(digits) : numeric.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')
+}
+
+function formatDelta(value: number | null | undefined, digits = 4): string {
+  if (value == null || !Number.isFinite(value)) return '-'
+  const sign = value > 0 ? '+' : ''
+  return `${sign}${value.toFixed(digits)}`
+}
+
+function deltaClass(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value) || value === 0) return 'delta-neutral'
+  return value > 0 ? 'delta-positive' : 'delta-negative'
+}
+
+function formatLabelList(labels: string[] | undefined): string {
+  if (!Array.isArray(labels) || labels.length === 0) return 'none'
+  return labels.join(', ')
 }
 
 function needsReview(img: ImageRow): boolean {
@@ -895,6 +1058,11 @@ async function fetchEvaluationRuns() {
     const resp = await api.get(`/api/projects/${projectId.value}/evaluations`)
     const rows = Array.isArray(resp.data?.data) ? (resp.data.data as EvaluationRunRow[]) : []
     evaluationRuns.value = rows
+    if (!availableBaselineEvaluationRuns.value.some((run) => String(run.id) === evaluationBaselineRunId.value)) {
+      evaluationBaselineRunId.value = availableBaselineEvaluationRuns.value[0]
+        ? String(availableBaselineEvaluationRuns.value[0].id)
+        : ''
+    }
 
     const latest = rows[0] ?? null
     if (latest && (latest.status === 'pending' || latest.status === 'running')) {
@@ -906,6 +1074,7 @@ async function fetchEvaluationRuns() {
     } else {
       stopEvaluationPolling()
     }
+    void refreshEvaluationInsights()
   } catch (err: any) {
     error.value = err?.response?.data?.message
       ? String(err.response.data.message)
@@ -918,6 +1087,51 @@ async function fetchEvaluationRuns() {
   }
 }
 
+async function fetchEvaluationReport(runId: number) {
+  const resp = await api.get(`/api/evaluations/${runId}/report`)
+  evaluationReport.value = (resp.data?.data ?? null) as EvaluationReport | null
+}
+
+async function fetchEvaluationComparison(runId: number) {
+  if (!availableBaselineEvaluationRuns.value.length) {
+    evaluationComparison.value = null
+    return
+  }
+  evaluationComparisonLoading.value = true
+  try {
+    const params = evaluationBaselineRunId.value ? { baseline_run_id: Number(evaluationBaselineRunId.value) } : undefined
+    const resp = await api.get(`/api/evaluations/${runId}/compare`, { params })
+    evaluationComparison.value = (resp.data?.data ?? null) as EvaluationComparison | null
+  } catch (err: any) {
+    if (Number(err?.response?.status ?? 0) === 404) {
+      evaluationComparison.value = null
+      return
+    }
+    throw err
+  } finally {
+    evaluationComparisonLoading.value = false
+  }
+}
+
+async function refreshEvaluationInsights() {
+  const latest = latestEvaluationRun.value
+  if (!latest || latest.status !== 'done') {
+    evaluationReport.value = null
+    evaluationComparison.value = null
+    return
+  }
+  try {
+    await fetchEvaluationReport(latest.id)
+    await fetchEvaluationComparison(latest.id)
+  } catch (err: any) {
+    error.value = err?.response?.data?.message
+      ? String(err.response.data.message)
+      : err?.message
+        ? String(err.message)
+        : String(err)
+  }
+}
+
 async function startEvaluation() {
   evaluationStarting.value = true
   error.value = ''
@@ -925,11 +1139,11 @@ async function startEvaluation() {
   try {
     const resp = await api.post(`/api/projects/${projectId.value}/evaluate`, {
       split: evaluationSplit.value,
-      model_tag: activeModelTag.value,
+      model_tag: evaluationModelTag.value,
     })
     const runId = Number(resp.data?.data?.run_id ?? 0)
     if (!runId) throw new Error('no run_id returned')
-    evaluationMessage.value = `Evaluation run #${runId} started on split=${evaluationSplit.value}.`
+    evaluationMessage.value = `Evaluation run #${runId} started on split=${evaluationSplit.value} with model=${evaluationModelTag.value}.`
     await fetchEvaluationRuns()
   } catch (err: any) {
     error.value = err?.response?.data?.message
@@ -970,6 +1184,22 @@ watch(projectId, () => {
   void fetchSystemConfig()
   void fetchFinetuneJobs()
   void fetchEvaluationRuns()
+})
+
+watch(availableProjectModelTags, (values) => {
+  if (!values.length) {
+    evaluationModelTag.value = 'base'
+    return
+  }
+  if (!values.includes(evaluationModelTag.value)) {
+    evaluationModelTag.value = values.includes(activeModelTag.value) ? activeModelTag.value : (values[0] ?? 'base')
+  }
+})
+
+watch(evaluationBaselineRunId, () => {
+  if (latestEvaluationRun.value?.status === 'done') {
+    void fetchEvaluationComparison(latestEvaluationRun.value.id)
+  }
 })
 </script>
 
@@ -1430,6 +1660,11 @@ watch(projectId, () => {
           <option value="val">val</option>
           <option value="test">test</option>
         </select>
+        <select v-model="evaluationModelTag" class="input compact" data-testid="evaluation-model-tag-select">
+          <option v-for="modelTag in availableProjectModelTags" :key="modelTag" :value="modelTag">
+            {{ modelTag }}
+          </option>
+        </select>
         <button
           class="btn primary"
           data-testid="evaluation-start-btn"
@@ -1437,11 +1672,11 @@ watch(projectId, () => {
           :disabled="!canStartEvaluation"
           @click="startEvaluation"
         >
-          {{ evaluationStarting ? 'Starting...' : 'Run Evaluation (M9)' }}
+          {{ evaluationStarting ? 'Starting...' : 'Run Evaluation (M15)' }}
         </button>
       </div>
       <div class="hint">
-        Evaluation compares fresh auto-annotation predictions against confirmed ground truth on val/test images. Quality sorting uses the project threshold:
+        Evaluation compares fresh auto-annotation predictions against confirmed ground truth on val/test images. M15 adds run comparison, failure analysis, and timing summaries. Quality sorting still uses the project threshold:
         <span class="mono">{{ qualityReviewThreshold.toFixed(2) }}</span>
       </div>
       <div v-if="evaluationMessage" class="hint evaluation-status">{{ evaluationMessage }}</div>
@@ -1451,7 +1686,168 @@ watch(projectId, () => {
         </div>
         <div class="hint mono" data-testid="evaluation-inference-route">{{ latestEvaluationInferenceText }}</div>
         <div class="hint mono">report={{ latestEvaluationRun.report_path ?? '-' }}</div>
-        <pre class="log-box" data-testid="evaluation-metrics">{{ latestEvaluationMetricsText }}</pre>
+
+        <div v-if="latestEvaluationRun.metrics" class="evaluation-grid">
+          <section class="evaluation-panel">
+            <h3 class="evaluation-title">Latest Metrics</h3>
+            <div class="metric-grid">
+              <article class="metric-card" data-testid="evaluation-metric-precision">
+                <span class="metric-label">Precision</span>
+                <strong>{{ formatMetricCompact(latestEvaluationRun.metrics?.precision) }}</strong>
+              </article>
+              <article class="metric-card" data-testid="evaluation-metric-recall">
+                <span class="metric-label">Recall</span>
+                <strong>{{ formatMetricCompact(latestEvaluationRun.metrics?.recall) }}</strong>
+              </article>
+              <article class="metric-card" data-testid="evaluation-metric-f1">
+                <span class="metric-label">F1</span>
+                <strong>{{ formatMetricCompact(latestEvaluationRun.metrics?.f1) }}</strong>
+              </article>
+              <article class="metric-card" data-testid="evaluation-metric-miou-bbox">
+                <span class="metric-label">mIoU bbox</span>
+                <strong>{{ formatMetricCompact(latestEvaluationRun.metrics?.miou_bbox) }}</strong>
+              </article>
+              <article class="metric-card" data-testid="evaluation-metric-miou-mask">
+                <span class="metric-label">mIoU mask</span>
+                <strong>{{ formatMetricCompact(latestEvaluationRun.metrics?.miou_mask) }}</strong>
+              </article>
+              <article class="metric-card" data-testid="evaluation-metric-dice">
+                <span class="metric-label">Dice</span>
+                <strong>{{ formatMetricCompact(latestEvaluationRun.metrics?.dice) }}</strong>
+              </article>
+            </div>
+
+            <div v-if="evaluationReport?.performance" class="metric-grid compact-grid">
+              <article class="metric-card">
+                <span class="metric-label">Avg total ms</span>
+                <strong>{{ formatMetricCompact(evaluationReport.performance.avg_total_ms, 2) }}</strong>
+              </article>
+              <article class="metric-card">
+                <span class="metric-label">Avg LLM ms</span>
+                <strong>{{ formatMetricCompact(evaluationReport.performance.avg_llm_ms, 2) }}</strong>
+              </article>
+              <article class="metric-card">
+                <span class="metric-label">Avg SAM ms</span>
+                <strong>{{ formatMetricCompact(evaluationReport.performance.avg_sam_ms, 2) }}</strong>
+              </article>
+              <article class="metric-card">
+                <span class="metric-label">Fallback images</span>
+                <strong>{{ formatMetricCompact(evaluationReport.performance.fallback_images, 0) }}</strong>
+              </article>
+              <article class="metric-card">
+                <span class="metric-label">Failure images</span>
+                <strong>{{ formatMetricCompact(evaluationReport.summary?.images_with_failures, 0) }}</strong>
+              </article>
+              <article class="metric-card">
+                <span class="metric-label">Perfect images</span>
+                <strong>{{ formatMetricCompact(evaluationReport.summary?.perfect_images, 0) }}</strong>
+              </article>
+            </div>
+
+            <details class="details-block">
+              <summary>Raw metrics JSON</summary>
+              <pre class="log-box" data-testid="evaluation-metrics">{{ latestEvaluationMetricsText }}</pre>
+            </details>
+          </section>
+
+          <section class="evaluation-panel">
+            <div class="row wrap-row compare-headline">
+              <h3 class="evaluation-title">Compare Runs</h3>
+              <select v-model="evaluationBaselineRunId" class="input compact" data-testid="evaluation-compare-baseline-select">
+                <option value="">Auto previous run</option>
+                <option v-for="run in availableBaselineEvaluationRuns" :key="run.id" :value="String(run.id)">
+                  #{{ run.id }} - {{ run.model_tag }} - {{ run.split }}
+                </option>
+              </select>
+            </div>
+
+            <div v-if="evaluationComparisonLoading" class="hint">Loading comparison...</div>
+            <template v-else-if="evaluationComparison">
+              <div class="hint mono">
+                baseline=#{{ evaluationComparison.baseline_run.id }} {{ evaluationComparison.baseline_run.model_tag }}
+                路 current=#{{ evaluationComparison.current_run.id }} {{ evaluationComparison.current_run.model_tag }}
+              </div>
+              <div class="compare-table" data-testid="evaluation-comparison-summary">
+                <div class="compare-header">
+                  <span>Metric</span>
+                  <span>Baseline</span>
+                  <span>Current</span>
+                  <span>Delta</span>
+                </div>
+                <div v-for="row in evaluationComparisonMetricRows" :key="row.key" class="compare-row">
+                  <span>{{ row.label }}</span>
+                  <span>{{ formatMetric(row.entry?.baseline, row.digits) }}</span>
+                  <span>{{ formatMetric(row.entry?.current, row.digits) }}</span>
+                  <span :class="deltaClass(row.entry?.delta)">{{ formatDelta(row.entry?.delta, row.digits) }}</span>
+                </div>
+              </div>
+
+              <div v-if="evaluationComparisonPerformanceRows.length" class="compare-table secondary-table">
+                <div class="compare-header">
+                  <span>Perf</span>
+                  <span>Baseline</span>
+                  <span>Current</span>
+                  <span>Delta</span>
+                </div>
+                <div v-for="row in evaluationComparisonPerformanceRows" :key="row.key" class="compare-row">
+                  <span>{{ row.label }}</span>
+                  <span>{{ formatMetric(row.entry?.baseline, row.digits) }}</span>
+                  <span>{{ formatMetric(row.entry?.current, row.digits) }}</span>
+                  <span :class="deltaClass(row.entry?.delta)">{{ formatDelta(row.entry?.delta, row.digits) }}</span>
+                </div>
+              </div>
+
+              <div v-if="evaluationPerLabelRows.length" class="comparison-list">
+                <div class="comparison-subtitle">Per-label F1 delta</div>
+                <article v-for="row in evaluationPerLabelRows.slice(0, 6)" :key="row.label" class="comparison-card">
+                  <div class="comparison-card-title">{{ row.label }}</div>
+                  <div class="hint mono">
+                    baseline={{ formatMetric(row.entry?.baseline) }} 路 current={{ formatMetric(row.entry?.current) }}
+                  </div>
+                  <div class="hint mono" :class="deltaClass(row.entry?.delta)">delta={{ formatDelta(row.entry?.delta) }}</div>
+                </article>
+              </div>
+
+              <div v-if="evaluationComparison.top_regressions?.length" class="comparison-list">
+                <div class="comparison-subtitle">Top regressions</div>
+                <article
+                  v-for="item in evaluationComparison.top_regressions.slice(0, 3)"
+                  :key="`regression-${item.image_id}`"
+                  class="comparison-card"
+                >
+                  <div class="comparison-card-title">#{{ item.image_id }} {{ item.filename ?? 'image' }}</div>
+                  <div class="hint mono">
+                    err={{ item.baseline.error_count }} -> {{ item.current.error_count }}
+                    路 f1={{ formatMetric(item.baseline.f1) }} -> {{ formatMetric(item.current.f1) }}
+                  </div>
+                  <div class="hint mono" :class="deltaClass(item.delta.f1)">
+                    delta err={{ item.delta.error_count ?? '-' }} 路 f1={{ formatDelta(item.delta.f1) }}
+                  </div>
+                </article>
+              </div>
+            </template>
+            <div v-else class="hint">Run at least two completed evaluations to unlock comparison.</div>
+          </section>
+
+          <section class="evaluation-panel">
+            <h3 class="evaluation-title">Failure Samples</h3>
+            <div v-if="latestEvaluationFailureSamples.length" class="failure-list" data-testid="evaluation-failure-samples">
+              <article v-for="sample in latestEvaluationFailureSamples" :key="sample.image_id" class="failure-card">
+                <div class="failure-card-title">#{{ sample.image_id }} {{ sample.filename }}</div>
+                <div class="hint mono">
+                  fp={{ sample.fp }} 路 fn={{ sample.fn }} 路 f1={{ formatMetric(sample.f1) }} 路 bbox={{ formatMetric(sample.miou_bbox) }}
+                </div>
+                <div class="hint mono">
+                  pred-miss={{ formatLabelList(sample.unmatched_prediction_labels) }}
+                </div>
+                <div class="hint mono">
+                  gt-miss={{ formatLabelList(sample.unmatched_ground_truth_labels) }}
+                </div>
+              </article>
+            </div>
+            <div v-else class="hint">No failed samples in the latest completed run.</div>
+          </section>
+        </div>
       </div>
       <div v-else-if="!evaluationLoading" class="hint">No evaluation run yet. Confirm some val/test annotations before starting.</div>
     </div>
@@ -1677,6 +2073,139 @@ watch(projectId, () => {
   color: rgba(250, 204, 21, 0.95);
 }
 
+.evaluation-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.evaluation-panel {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.evaluation-title {
+  margin: 0;
+  font-size: 14px;
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.metric-grid.compact-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.metric-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.metric-label {
+  font-size: 12px;
+  opacity: 0.72;
+}
+
+.details-block {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding-top: 10px;
+}
+
+.details-block summary {
+  cursor: pointer;
+  opacity: 0.82;
+}
+
+.compare-headline {
+  justify-content: space-between;
+}
+
+.compare-table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.secondary-table {
+  margin-top: 4px;
+}
+
+.compare-header,
+.compare-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 1.3fr) repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.compare-header {
+  background: rgba(255, 255, 255, 0.05);
+  font-weight: 650;
+}
+
+.compare-row:nth-child(odd) {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.comparison-list,
+.failure-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.comparison-subtitle {
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.68;
+}
+
+.comparison-card,
+.failure-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.comparison-card-title,
+.failure-card-title {
+  font-weight: 650;
+}
+
+.delta-positive {
+  color: rgba(56, 211, 159, 0.95);
+}
+
+.delta-negative {
+  color: rgba(248, 81, 73, 0.95);
+}
+
+.delta-neutral {
+  opacity: 0.72;
+}
+
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
 }
@@ -1898,6 +2427,16 @@ watch(projectId, () => {
 
   .settings-grid {
     grid-template-columns: 1fr;
+  }
+
+  .metric-grid,
+  .metric-grid.compact-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .compare-header,
+  .compare-row {
+    grid-template-columns: 1fr 1fr;
   }
 
   .input.compact {
