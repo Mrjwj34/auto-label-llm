@@ -5,86 +5,51 @@
 - 技术路线与目标见 `design_doc.md`
 - 可执行的开发计划与进度见 `dev_plan.md`
 
-## 快速开始（开发）
+## 快速开始（Linux 主路径）
 
-### 后端（FastAPI）
-
-1) 安装依赖（建议使用虚拟环境）
-
-```powershell
-python -m venv .venv
-.venv\\Scripts\\Activate.ps1
-pip install -r requirements.txt
-```
-
-2) 启动
-
-```powershell
-python -m backend.main
-```
-
-健康检查：`GET http://127.0.0.1:8000/healthz`
-
-### 配置档位与一键切换（M10）
-
-- 后端会优先读取仓库根目录下的 `.env.active`
-- 前端 Vite 会读取 `frontend/.env.local`
-- 推荐直接用脚本切换：
-
-```powershell
-.\scripts\use-profile.ps1 -Profile dev_low_resource
-.\scripts\use-profile.ps1 -Profile test_real_stack
-.\scripts\use-profile.ps1 -Profile demo_prod
-```
-
-Linux 也可以直接用跨平台脚本：
+现在统一只保留一个 Linux 启动脚本：
 
 ```bash
-python3 scripts/use_profile.py --profile dev_low_resource
-python3 scripts/use_profile.py --profile test_real_stack
-python3 scripts/use_profile.py --profile demo_prod
+bash scripts/start-linux.sh --profile dev_low_resource --run-tests
 ```
 
-- 也可以在启动时一起切换：
+这条命令会在一处完成：
 
-```powershell
-.\start-dev.ps1 -Profile dev_low_resource
-.\start-dev.ps1 -Profile demo_prod
-```
-
-- `dev_low_resource`：低算力开发档，默认 `stub/mock/CPU` 友好
-- `test_real_stack`：后续统一联调档，面向真实 vLLM / SAM / 训练环境
-- `demo_prod`：答辩/演示档，使用更激进的模型与超时配置
-
-### Linux 一键补环境（真实栈）
-
-如果你要在 Linux 上直接补齐真实依赖，可以用：
-
-```bash
-bash scripts/bootstrap-linux.sh --profile test_real_stack --download-sam3-checkpoint
-```
-
-这个脚本会：
-
+- 自动检查并补齐 Linux 基础依赖（Ubuntu / Debian 主路径）
 - 创建或复用 `.venv`
 - 安装 `requirements.txt`
-- 生成 `.env.active` 与 `frontend/.env.local`
 - 安装前端依赖
-- 在 `test_real_stack` / `demo_prod` 下默认补齐 `torch`、官方 `sam3`、`huggingface_hub`、`vllm`
-- 可选把 `SAM3` checkpoint 下载到 `models/sam3/`
+- 根据 profile 生成 `.env.active` 与 `frontend/.env.local`
+- 可选运行 `compileall + pytest + frontend build`
+- 拉起 Redis、worker、FastAPI、前端开发服务器
+- 在 `test_real_stack` / `demo_prod` 下按需补齐 `torch`、`sam3`、`vllm`、`LLaMA-Factory`
 
-可用参数：
+常用用法：
 
 ```bash
-bash scripts/bootstrap-linux.sh --profile dev_low_resource --skip-vllm --skip-sam3
-bash scripts/bootstrap-linux.sh --profile demo_prod --with-vllm --with-sam3
+# 低算力稳妥联调，顺带跑全量测试
+bash scripts/start-linux.sh --profile dev_low_resource --run-tests
+
+# 只补环境，不启动服务；适合先预热昂贵算力机器
+bash scripts/start-linux.sh --profile test_real_stack --setup-only --with-sam3 --with-llamafactory
+
+# 真正的本地真实栈联调：本机起 vLLM + SAM3 + LLaMA-Factory
+VLLM_MODEL_SOURCE=Qwen/Qwen2.5-VL-7B-Instruct \
+bash scripts/start-linux.sh --profile test_real_stack --with-vllm --with-sam3 --with-llamafactory
+
+# 如果真实 vLLM 已经在别处运行，只让脚本接管其余服务
+VLLM_BASE_URL=http://127.0.0.1:8001 \
+bash scripts/start-linux.sh --profile test_real_stack --skip-vllm
 ```
 
-说明：
+补充说明：
 
-- Linux 是真实栈主路径；Windows 上如果缺少真实依赖，允许继续走 `dev_low_resource` / `stub` 回退
-- `scripts/bootstrap-linux.sh` 默认只负责“补环境”，不直接托管所有服务进程
-- `scripts/use-profile.sh` 是 Linux 下的 profile 切换包装脚本，本质上调用同一个 `scripts/use_profile.py`
+- `dev_low_resource`：低算力开发档，默认 `stub/mock/CPU` 友好
+- `test_real_stack`：统一联调档，面向真实 vLLM / SAM / 训练环境
+- `demo_prod`：答辩演示档，使用更激进的模型与超时配置
+- 脚本默认把日志写到 `logs/start-linux-时间戳/`
+- 这是单机开发 / 单机演示脚本，不包含 Nginx、反向代理、生产部署编排
+- 后端仍优先读取仓库根目录 `.env.active`，前端仍读取 `frontend/.env.local`，但现在都由 `scripts/start-linux.sh` 自动生成，不需要再单独切 profile
 
 ### 自动标注（M4）
 
@@ -173,14 +138,14 @@ npm run dev
 - M14 当前新增了真实 LLaMA-Factory 子进程训练入口，以及可选的 vLLM 运行时 LoRA 加载/卸载接口联动
 - 低算力 / 测试环境仍然默认保留 mock finetune runner，确保 `pytest`、浏览器回归和本地联调稳定可跑
 
-Linux 下可以直接用辅助脚本把真实模型暴露成当前项目配置里的逻辑名称：
+如果你要在 Linux 上把真实模型暴露成当前项目配置里的逻辑名称，直接让统一启动脚本接管本地 vLLM：
 
 ```bash
 VLLM_MODEL_SOURCE=Qwen/Qwen2.5-VL-7B-Instruct \
-bash scripts/run-vllm-linux.sh --served-model-name qwen3-vl-4b
+bash scripts/start-linux.sh --profile test_real_stack --with-vllm
 ```
 
-这样后端仍然请求 `qwen3-vl-4b`，但 vLLM 实际加载的是你指定的真实 Hugging Face 模型或本地模型目录。
+这样后端仍然请求 profile 里的 `VLLM_MODEL_NAME`，但本地 vLLM 实际加载的是你指定的 Hugging Face 模型或本地模型目录。
 
 常用接口：
 

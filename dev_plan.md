@@ -37,7 +37,7 @@
   - `test_real_stack`：后续统一联调档。用于连接真实 vLLM / SAM / Redis / 训练环境，并在需要时补充 Celery 联调，验证真实链路。
   - `demo_prod`：演示/答辩档。面向高算力机器，使用最终推荐配置。
 - 必须提供**一键切换测试配置和生产配置**的机制：
-  - 形式可以是 `scripts/use-profile.ps1`、`start --profile xxx`、`.env.profile` 覆盖或等价方案；
+  - 形式可以是 `scripts/start-linux.sh --profile xxx`、`start --profile xxx`、`.env.profile` 覆盖或等价方案；
   - 目标是不手改零散环境变量，也不手动改代码。
 - 当前开发机算力较低，M10～M15 的本地开发默认以 `dev_low_resource` 为主；真实模型、真实微调、完整外部依赖联调可延后到 `test_real_stack` 环境统一进行。
 - 在统一联调之前，凡是无法在开发机直接跑真实链路的功能，必须用更详尽的替代验证覆盖，包括但不限于：
@@ -71,7 +71,7 @@
 | M13 | 任务基础设施升级 | Redis / WebSocket / GPU 锁升级当前轻量任务骨架，Celery 视需要补齐 | ✅ | - |
 | M14 | 真实 LoRA 微调闭环 | LLaMA-Factory 真训练 + LoRA 激活后真正参与推理 | 🟡 | - |
 | M15 | 评估系统增强与对比看板 | mask 指标、run 对比、失败案例分析、性能统计 | ✅ | - |
-| M16 | 一键启动与演示脚本 | 一条命令启动所有服务与外部依赖 | ⬜ | - |
+| M16 | 一键启动与演示脚本 | 一条命令启动所有服务与外部依赖 | ✅ | - |
 
 > 说明：原 M10 “一键启动与演示脚本”顺延为 M16。M10～M15 用于补齐当前实现与 `design_doc.md` 之间的差距，目标是最终与设计文档一致。
 
@@ -348,13 +348,12 @@
 ### M16 — 一键启动与演示脚本
 
 **范围**
-- 提供 Windows 友好的 `start.ps1`，以及可选的 `start.sh`（便于部署到 Linux 演示机）。
-- Linux 主路径补齐 `scripts/bootstrap-linux.sh` / `scripts/use-profile.sh`，用于一键补环境与一键切换 profile；Windows 允许在缺真实依赖时回退到 `dev_low_resource`。
-- 文档说明如何准备 Redis / vLLM / SAM 权重 / LLaMA-Factory 等外部依赖。
-- 支持一键拉起 FastAPI、Celery Worker、Redis、vLLM 及前端开发/演示环境，或在缺失依赖时给出明确提示。
+- 收敛为单一 Linux 启动入口 `scripts/start-linux.sh`，负责一键补环境、写 profile、执行预检并托管服务进程。
+- 文档说明如何准备 Redis / vLLM / SAM 权重 / LLaMA-Factory 等外部依赖，但不再为 Windows 启动脚本和生产部署编排投入额外精力。
+- 支持一键拉起 FastAPI、Redis worker、Redis、可选本地 vLLM 与前端开发/演示环境；缺失依赖时给出明确提示或自动补齐。
 
 **验收**
-- 从空环境到可演示：按 README 走一遍不踩坑（或明确每个依赖缺失时的提示与替代方案）。
+- 从空 Linux 环境到可演示：按 README 走一遍不踩坑（或明确每个依赖缺失时的提示与替代方案）。
 
 ---
 
@@ -392,3 +391,4 @@
 | 2026-04-07 | M13 | 🟡 → ✅ | - | `.venv\Scripts\python.exe scripts\verify_m13_real_redis.py --redis-url redis://127.0.0.1:6380/15 --flush-redis-db` | ✅ 真实 Redis + 独立 worker + 浏览器回归通过 | 当前 Redis 任务骨架已完成分进程联调验证；结合本机算力与现有任务抽象，M13 阶段先不额外引入 Celery |
 | 2026-04-07 | M14 | ⬜ → 🟡 | - | `.venv\Scripts\python.exe -m compileall backend tests scripts`、`.venv\Scripts\python.exe -m pytest -q`、`cd frontend && npm run build`、`.venv\Scripts\python.exe scripts\verify_m14_browser.py --redis-url redis://127.0.0.1:6380/14 --flush-redis-db` | ✅ 后端测试 + 浏览器回归通过 | 真实 LLaMA-Factory subprocess 入口、metrics 暴露、LoRA runtime API hook 与可复跑浏览器验证脚本已落地；真实训练效果仍待 `test_real_stack` 验收 |
 | 2026-04-07 | M15 | ⬜ → ✅ | - | `.venv\Scripts\python.exe -m compileall backend tests scripts`、`.venv\Scripts\python.exe -m pytest -q`、`cd frontend && npm run build`、Playwright MCP 浏览器回归（两次 evaluation compare + failure sample 面板） | ✅ 代码测试 + 浏览器回归通过 | 已补齐 `mIoU_mask / Dice`、run compare API、失败样本摘要、性能统计与前端对比看板，达到本地验收条件 |
+| 2026-04-07 | M16 | ⬜ → ✅ | - | `wsl bash -n scripts/start-linux.sh`、`wsl bash scripts/start-linux.sh --help`、`.venv\Scripts\python.exe -m compileall backend tests scripts`、`.venv\Scripts\python.exe -m pytest -q`、`cd frontend && npm run build` | ✅ 启动脚本语法/帮助页通过，代码测试通过 | 已收敛为单一 `scripts/start-linux.sh` Linux 入口；当前 WSL 因缺少 `python3-pip/ensurepip` 且无免密 sudo，未完整跑通自动补系统依赖分支，但失败提示已验证清晰，目标 Linux 机器按 README 具备 sudo 后即可走完整自举链路 |

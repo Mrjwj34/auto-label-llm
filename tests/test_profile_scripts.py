@@ -1,22 +1,10 @@
 from __future__ import annotations
 
-import importlib.util
 import json
-from pathlib import Path
 
+from backend.services.system_profiles import activate_system_profile
 
-def _load_use_profile_module():
-    module_path = Path(__file__).resolve().parents[1] / "scripts" / "use_profile.py"
-    spec = importlib.util.spec_from_file_location("scripts_use_profile", module_path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def test_apply_profile_writes_backend_and_frontend_env_files(tmp_path):
-    module = _load_use_profile_module()
+def test_activate_system_profile_writes_backend_and_frontend_env_files(tmp_path):
     profile_dir = tmp_path / "configs" / "profiles"
     frontend_dir = tmp_path / "frontend"
     profile_dir.mkdir(parents=True, exist_ok=True)
@@ -32,7 +20,9 @@ def test_apply_profile_writes_backend_and_frontend_env_files(tmp_path):
         encoding="utf-8",
     )
 
-    backend_env_path, frontend_env_path = module.apply_profile(tmp_path, "test_real_stack")
+    result = activate_system_profile("test_real_stack", root_dir=tmp_path)
+    backend_env_path = tmp_path / ".env.active"
+    frontend_env_path = tmp_path / "frontend" / ".env.local"
 
     assert backend_env_path.read_text(encoding="utf-8") == (
         "# Generated from profile: test_real_stack\n"
@@ -44,17 +34,20 @@ def test_apply_profile_writes_backend_and_frontend_env_files(tmp_path):
         "VITE_APP_PROFILE=test_real_stack\n"
         "VITE_API_BASE_URL=http://127.0.0.1:8000\n"
     )
+    assert result["active_profile"] == "test_real_stack"
 
 
-def test_apply_profile_rejects_missing_sections(tmp_path):
-    module = _load_use_profile_module()
+def test_activate_system_profile_rejects_missing_sections(tmp_path):
     profile_dir = tmp_path / "configs" / "profiles"
     (tmp_path / "frontend").mkdir(parents=True, exist_ok=True)
     profile_dir.mkdir(parents=True, exist_ok=True)
-    (profile_dir / "broken.json").write_text(json.dumps({"backend": {"APP_PROFILE": "broken"}}), encoding="utf-8")
+    (profile_dir / "dev_low_resource.json").write_text(
+        json.dumps({"backend": {"APP_PROFILE": "dev_low_resource"}}),
+        encoding="utf-8",
+    )
 
     try:
-        module.apply_profile(tmp_path, "broken")
+        activate_system_profile("dev_low_resource", root_dir=tmp_path)
         assert False, "expected a ValueError when frontend section is missing"
-    except ValueError as exc:
-        assert "backend/frontend" in str(exc)
+    except Exception as exc:  # noqa: BLE001
+        assert "profile sections missing" in str(exc)
