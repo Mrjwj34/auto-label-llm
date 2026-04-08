@@ -16,11 +16,16 @@ from backend.config import get_settings
 from backend.database import get_session_factory
 from backend.models.finetune_job import FinetuneJob
 from backend.models.project import Project
+from backend.services.local_vllm_runtime import (
+    ensure_local_managed_vllm_started,
+    is_local_vllm_managed_for_settings,
+)
 from backend.services.project_settings import (
     load_project_settings,
     load_stored_project_settings,
     resolve_project_profile_name,
 )
+from backend.utils.gpu_lock import GPULock
 from backend.utils.storage import resolve_path
 
 
@@ -179,7 +184,7 @@ def activate_project_model_tag(project: Project, model_tag: str, db: Session) ->
     route = resolve_inference_route(project, requested_model_tag=cleaned_tag, db=db)
     stored = load_stored_project_settings(project)
     previous_tag = str(stored.get("active_model_tag") or "base").strip() or "base"
-    runtime_sync = sync_vllm_runtime(project, previous_model_tag=previous_tag, target_route=route, db=db)
+    runtime_sync = sync_vllm_serving_runtime(project, previous_model_tag=previous_tag, target_route=route, db=db)
     stored["active_model_tag"] = route.effective_model_tag
     project.config = json.dumps(stored, ensure_ascii=False)
     db.add(project)
@@ -191,6 +196,74 @@ def activate_project_model_tag(project: Project, model_tag: str, db: Session) ->
         "route": route.to_dict(),
         "runtime_sync": runtime_sync,
         "message": f"Activated {route.short_label()}",
+    }
+
+
+def sync_vllm_serving_runtime(
+    project: Project,
+    *,
+    previous_model_tag: str,
+    target_route: InferenceRoute,
+    db: Session | None = None,
+) -> dict[str, Any]:
+    local_result = _sync_local_managed_vllm_runtime(
+        project,
+        previous_model_tag=previous_model_tag,
+        target_route=target_route,
+        db=db,
+    )
+    if local_result is not None:
+        return local_result
+    return sync_vllm_runtime(project, previous_model_tag=previous_model_tag, target_route=target_route, db=db)
+
+
+def _sync_local_managed_vllm_runtime(
+    project: Project,
+    *,
+    previous_model_tag: str,
+    target_route: InferenceRoute,
+    db: Session | None = None,
+) -> dict[str, Any] | None:
+    settings = get_settings()
+    if not is_local_vllm_managed_for_settings(settings):
+        return None
+    if settings.annotation_backend != "openai_compatible":
+        return None
+
+    actions: list[dict[str, Any]] = []
+    previous_tag = str(previous_model_tag or "base").strip() or "base"
+    needs_lora_sync = previous_tag.startswith("lora:") or target_route.route_kind == "lora"
+
+    with GPULock.acquire_model_reload():
+        started = ensure_local_managed_vllm_started(enable_lora=target_route.route_kind == "lora")
+        if started["status"] in {"started", "already_running"}:
+            actions.append(
+                {
+                    "action": "start" if started["status"] == "started" else "reuse",
+                    "pid": started.get("pid"),
+                    "enable_lora": target_route.route_kind == "lora",
+                }
+            )
+
+        if needs_lora_sync:
+            runtime_result = _sync_vllm_runtime_actions(
+                project,
+                previous_model_tag=previous_tag,
+                target_route=target_route,
+                db=db,
+                force_runtime_update=True,
+                skip_previous_unload=started["status"] == "started",
+            )
+            actions.extend(runtime_result["actions"])
+
+    message = "Local managed vLLM is ready for the requested route."
+    if target_route.route_kind == "lora":
+        message = f"Local managed vLLM is ready for {target_route.effective_model_tag}."
+    return {
+        "status": "synced",
+        "mode": "local_managed_vllm",
+        "actions": actions,
+        "message": message,
     }
 
 
@@ -453,8 +526,27 @@ def sync_vllm_runtime(
     target_route: InferenceRoute,
     db: Session | None = None,
 ) -> dict[str, Any]:
+    return _sync_vllm_runtime_actions(
+        project,
+        previous_model_tag=previous_model_tag,
+        target_route=target_route,
+        db=db,
+        force_runtime_update=False,
+        skip_previous_unload=False,
+    )
+
+
+def _sync_vllm_runtime_actions(
+    project: Project,
+    *,
+    previous_model_tag: str,
+    target_route: InferenceRoute,
+    db: Session | None = None,
+    force_runtime_update: bool,
+    skip_previous_unload: bool,
+) -> dict[str, Any]:
     settings = get_settings()
-    if not settings.vllm_enable_runtime_lora_update:
+    if not force_runtime_update and not settings.vllm_enable_runtime_lora_update:
         return {
             "status": "skipped",
             "mode": "disabled",
@@ -473,7 +565,11 @@ def sync_vllm_runtime(
     actions: list[dict[str, Any]] = []
     previous_tag = str(previous_model_tag or "base").strip() or "base"
 
-    if previous_tag.startswith("lora:") and previous_tag != target_route.effective_model_tag:
+    if (
+        not skip_previous_unload
+        and previous_tag.startswith("lora:")
+        and previous_tag != target_route.effective_model_tag
+    ):
         previous_route: InferenceRoute | None
         try:
             previous_route = resolve_inference_route(project, requested_model_tag=previous_tag, db=db)

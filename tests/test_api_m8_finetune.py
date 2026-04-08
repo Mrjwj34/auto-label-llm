@@ -185,6 +185,27 @@ def test_finetune_job_acquires_gpu_training_lock(client, monkeypatch):
     assert events[-1] == "released"
 
 
+def test_finetune_job_pauses_local_managed_vllm_before_training(client, monkeypatch):
+    project_id, _image_id = _create_confirmed_train_annotation(client, task_type="detection")
+
+    monkeypatch.setattr(
+        finetune_service,
+        "stop_local_managed_vllm",
+        lambda: {"status": "stopped", "pid": 2468, "message": "stopped"},
+    )
+
+    start = client.post("/api/finetune/start", json={"project_id": project_id})
+    assert start.status_code == 200
+    job_id = start.json()["data"]["job_id"]
+
+    final_status = _poll_finetune_job(client, job_id)
+    assert final_status["status"] == "done"
+
+    log_resp = client.get(f"/api/finetune/{job_id}/log")
+    assert log_resp.status_code == 200
+    assert "Paused local managed vLLM" in log_resp.json()["data"]["log"]
+
+
 def test_finetune_job_can_run_llamafactory_subprocess(client, monkeypatch):
     project_id, _image_id = _create_confirmed_train_annotation(client, task_type="detection")
     mock_cli = (Path(__file__).resolve().parent / "helpers" / "mock_llamafactory_cli.py").resolve()

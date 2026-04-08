@@ -23,6 +23,7 @@ from backend.models.annotation import Annotation
 from backend.models.finetune_job import FinetuneJob
 from backend.models.image import Image
 from backend.models.project import Project
+from backend.services.local_vllm_runtime import stop_local_managed_vllm
 from backend.services.project_settings import get_project_labels, load_project_settings
 from backend.services.vllm_client import activate_project_model_tag
 from backend.tasks.task_manager import TaskContext, get_task_manager
@@ -343,6 +344,14 @@ def run_finetune_job_task(job_id: int, *, ctx: TaskContext | None = None) -> Non
 
             with GPULock.acquire_training():
                 _append_log(log_path, "GPU training lock acquired.")
+                local_vllm_result = stop_local_managed_vllm()
+                if local_vllm_result["status"] == "stopped":
+                    _append_log(
+                        log_path,
+                        f"Paused local managed vLLM (pid={local_vllm_result.get('pid')}) before training.",
+                    )
+                elif local_vllm_result["status"] not in {"skipped", "already_stopped"}:
+                    _append_log(log_path, f"Local managed vLLM note: {local_vllm_result['message']}")
                 if runner_backend == "llamafactory":
                     _run_llamafactory_training(job, project, config, log_path, ctx=ctx)
                 else:

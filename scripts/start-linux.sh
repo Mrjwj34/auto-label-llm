@@ -100,6 +100,7 @@ state_dir=""
 install_state_dir=""
 vllm_help_cache_path=""
 vllm_last_progress_snapshot=""
+local_vllm_state_path=""
 
 declare -a managed_pids=()
 declare -a vllm_extra_args=()
@@ -232,6 +233,15 @@ cleanup() {
       wait "$pid" >/dev/null 2>&1 || true
     fi
   done
+  if [[ -n "$local_vllm_state_path" ]]; then
+    local state_pid
+    state_pid="$(current_local_vllm_state_pid 2>/dev/null || echo 0)"
+    if [[ "$state_pid" =~ ^[0-9]+$ && "$state_pid" -gt 0 ]] && kill -0 "$state_pid" >/dev/null 2>&1; then
+      kill "$state_pid" >/dev/null 2>&1 || true
+      wait "$state_pid" >/dev/null 2>&1 || true
+    fi
+    rm -f "$local_vllm_state_path" >/dev/null 2>&1 || true
+  fi
 }
 
 tail_last_lines() {
@@ -250,6 +260,117 @@ count_log_lines() {
   else
     echo 0
   fi
+}
+
+json_array_from_words() {
+  "$venv_python" - "$@" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+
+print(json.dumps(sys.argv[1:], ensure_ascii=False))
+PY
+}
+
+clear_local_vllm_runtime_state() {
+  [[ -n "$local_vllm_state_path" ]] || return 0
+  rm -f "$local_vllm_state_path" >/dev/null 2>&1 || true
+}
+
+write_local_vllm_runtime_state() {
+  local pid="$1"
+  local log_path="$2"
+  local supports_enable_lora="$3"
+  local env_unset_json="$4"
+  local command_json="$5"
+  [[ -n "$local_vllm_state_path" ]] || return 0
+
+  "$venv_python" - \
+    "$local_vllm_state_path" \
+    "$repo_root" \
+    "$vllm_base_url" \
+    "$vllm_host" \
+    "$vllm_port" \
+    "$vllm_model_source" \
+    "$vllm_served_model_name" \
+    "$pid" \
+    "$log_path" \
+    "$supports_enable_lora" \
+    "$env_unset_json" \
+    "$command_json" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+state_path = Path(sys.argv[1]).resolve()
+repo_root = Path(sys.argv[2]).resolve()
+base_url = sys.argv[3]
+host = sys.argv[4]
+port = int(sys.argv[5])
+model_source = sys.argv[6]
+served_model_name = sys.argv[7]
+pid = int(sys.argv[8])
+log_path = str(Path(sys.argv[9]).resolve())
+supports_enable_lora = sys.argv[10] == "1"
+env_unset = json.loads(sys.argv[11])
+command = json.loads(sys.argv[12])
+
+payload = {
+    "version": 1,
+    "managed_by": "scripts/start-linux.sh",
+    "repo_root": repo_root.as_posix(),
+    "cwd": repo_root.as_posix(),
+    "base_url": base_url,
+    "host": host,
+    "port": port,
+    "model_source": model_source,
+    "served_model_name": served_model_name,
+    "pid": pid,
+    "log_path": log_path,
+    "env_unset": env_unset,
+    "env_set": {"PYTHONUNBUFFERED": "1"},
+    "command": command,
+    "supports_enable_lora": supports_enable_lora,
+    "started_at": datetime.now(timezone.utc).isoformat(),
+}
+state_path.parent.mkdir(parents=True, exist_ok=True)
+state_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+PY
+}
+
+current_local_vllm_state_pid() {
+  [[ -n "$local_vllm_state_path" && -f "$local_vllm_state_path" ]] || {
+    echo 0
+    return 0
+  }
+
+  "$venv_python" - "$local_vllm_state_path" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    print(0)
+    raise SystemExit(0)
+
+if not isinstance(payload, dict):
+    print(0)
+    raise SystemExit(0)
+
+try:
+    print(int(payload.get("pid") or 0))
+except Exception:
+    print(0)
+PY
 }
 
 format_bytes() {
@@ -1233,6 +1354,7 @@ managed_log_dir="$session_log_dir/runtime"
 state_dir="$repo_root/.cache/start-linux"
 install_state_dir="$state_dir/install-state"
 mkdir -p "$setup_log_dir" "$managed_log_dir" "$install_state_dir"
+local_vllm_state_path="$state_dir/local-vllm-state.json"
 
 readarray -t _vllm_parts < <("$system_python" - "$vllm_base_url" <<'PY'
 from __future__ import annotations
@@ -1637,31 +1759,24 @@ if [[ "$start_local_vllm" -eq 1 ]]; then
   log "  swap_space=${vllm_swap_space:-<default>}"
   log "  safe_mode=$vllm_safe_mode"
 
-  vllm_command=(
-    env
+  vllm_env_unset=(
+    VLLM_MODEL_SOURCE
+    VLLM_BASE_URL
+    VLLM_SERVED_MODEL_NAME
+    VLLM_MAX_MODEL_LEN
+    VLLM_GPU_MEMORY_UTILIZATION
+    VLLM_MAX_NUM_SEQS
+    VLLM_DTYPE
+    VLLM_TENSOR_PARALLEL_SIZE
+    VLLM_PIPELINE_PARALLEL_SIZE
+    VLLM_MAX_NUM_BATCHED_TOKENS
+    VLLM_SWAP_SPACE
+    VLLM_CPU_OFFLOAD_GB
+    VLLM_DOWNLOAD_DIR
+    VLLM_START_TIMEOUT
+    VLLM_LOG_TAIL_LINES
   )
-  for env_name in \
-    VLLM_MODEL_SOURCE \
-    VLLM_BASE_URL \
-    VLLM_SERVED_MODEL_NAME \
-    VLLM_MAX_MODEL_LEN \
-    VLLM_GPU_MEMORY_UTILIZATION \
-    VLLM_MAX_NUM_SEQS \
-    VLLM_DTYPE \
-    VLLM_TENSOR_PARALLEL_SIZE \
-    VLLM_PIPELINE_PARALLEL_SIZE \
-    VLLM_MAX_NUM_BATCHED_TOKENS \
-    VLLM_SWAP_SPACE \
-    VLLM_CPU_OFFLOAD_GB \
-    VLLM_DOWNLOAD_DIR \
-    VLLM_START_TIMEOUT \
-    VLLM_LOG_TAIL_LINES; do
-    if [[ -n "${!env_name:-}" ]]; then
-      vllm_command+=(-u "$env_name")
-    fi
-  done
-  vllm_command+=(
-    PYTHONUNBUFFERED=1
+  vllm_command=(
     "$venv_python"
     -m
     vllm.entrypoints.openai.api_server
@@ -1711,19 +1826,47 @@ if [[ "$start_local_vllm" -eq 1 ]]; then
     vllm_command+=("${vllm_extra_args[@]}")
   fi
 
-  start_service vllm "${vllm_command[@]}"
+  supports_enable_lora=0
+  if vllm_supports_argument --enable-lora; then
+    supports_enable_lora=1
+  fi
+
+  vllm_launch_command=(env)
+  for env_name in "${vllm_env_unset[@]}"; do
+    if [[ -n "${!env_name:-}" ]]; then
+      vllm_launch_command+=(-u "$env_name")
+    fi
+  done
+  vllm_launch_command+=(
+    PYTHONUNBUFFERED=1
+    "${vllm_command[@]}"
+  )
+
+  clear_local_vllm_runtime_state
+  start_service vllm "${vllm_launch_command[@]}"
   vllm_pid="$started_pid"
   readarray -t vllm_probe_urls < <(build_vllm_probe_urls "$vllm_base_url")
   wait_for_service_ready "Local vLLM" "$vllm_pid" "$vllm_start_timeout" "$managed_log_dir/vllm.log" "${vllm_probe_urls[@]}" || {
     die "Local vLLM failed to become healthy."
   }
+  env_unset_json="$(json_array_from_words "${vllm_env_unset[@]}")"
+  command_json="$(json_array_from_words "${vllm_command[@]}")"
+  write_local_vllm_runtime_state \
+    "$vllm_pid" \
+    "$managed_log_dir/vllm.log" \
+    "$supports_enable_lora" \
+    "$env_unset_json" \
+    "$command_json"
   log "Local vLLM started with pid $vllm_pid"
 elif [[ "$annotation_backend" == "openai_compatible" ]]; then
+  clear_local_vllm_runtime_state
   readarray -t vllm_probe_urls < <(build_vllm_probe_urls "$vllm_base_url")
   wait_for_any_url 20 "${vllm_probe_urls[@]}" || {
     die "Profile ${profile} expects an OpenAI-compatible endpoint at ${vllm_base_url}, but it is not healthy. Pass --vllm-model-source with --with-vllm, or point VLLM_BASE_URL to a running service."
   }
   log "Using external/already-running OpenAI-compatible endpoint at ${vllm_base_url}"
+else
+  clear_local_vllm_runtime_state
 fi
 
 if [[ "$embedded_worker" -eq 0 ]]; then
@@ -1772,7 +1915,18 @@ EOF
 
 while true; do
   sleep 2
-  for pid in "${managed_pids[@]}"; do
+  for index in "${!managed_pids[@]}"; do
+    pid="${managed_pids[$index]}"
+    if [[ -n "${vllm_pid:-}" && "$pid" == "${vllm_pid:-}" && -f "$local_vllm_state_path" ]]; then
+      state_pid="$(current_local_vllm_state_pid)"
+      if [[ "$state_pid" =~ ^[0-9]+$ && "$state_pid" -gt 0 && "$state_pid" != "$pid" ]]; then
+        managed_pids[$index]="$state_pid"
+        vllm_pid="$state_pid"
+        pid="$state_pid"
+      elif [[ "$state_pid" == "0" ]]; then
+        continue
+      fi
+    fi
     if ! kill -0 "$pid" >/dev/null 2>&1; then
       warn "A managed service exited unexpectedly."
       for log_file in "$managed_log_dir"/*.log; do
