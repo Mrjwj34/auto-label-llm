@@ -99,6 +99,7 @@ managed_log_dir=""
 state_dir=""
 install_state_dir=""
 vllm_help_cache_path=""
+vllm_last_progress_snapshot=""
 
 declare -a managed_pids=()
 declare -a vllm_extra_args=()
@@ -249,6 +250,131 @@ count_log_lines() {
   else
     echo 0
   fi
+}
+
+format_bytes() {
+  local bytes="${1:-0}"
+  awk -v bytes="$bytes" '
+    BEGIN {
+      split("B KiB MiB GiB TiB PiB", units, " ")
+      index = 1
+      value = bytes + 0
+      while (value >= 1024 && index < 6) {
+        value /= 1024
+        index += 1
+      }
+      if (value >= 10 || index == 1) {
+        printf "%.0f%s", value, units[index]
+      } else {
+        printf "%.1f%s", value, units[index]
+      }
+    }
+  '
+}
+
+resolve_hf_hub_cache_dir() {
+  if [[ -n "${HUGGINGFACE_HUB_CACHE:-}" ]]; then
+    printf '%s\n' "$HUGGINGFACE_HUB_CACHE"
+    return 0
+  fi
+  if [[ -n "${HF_HOME:-}" ]]; then
+    printf '%s\n' "${HF_HOME%/}/hub"
+    return 0
+  fi
+  if [[ -d /workspace/.hf_home/hub ]]; then
+    printf '%s\n' "/workspace/.hf_home/hub"
+    return 0
+  fi
+  printf '%s\n' "${HOME}/.cache/huggingface/hub"
+}
+
+resolve_hf_xet_cache_dir() {
+  if [[ -n "${HF_XET_CACHE:-}" ]]; then
+    printf '%s\n' "$HF_XET_CACHE"
+    return 0
+  fi
+  if [[ -n "${HF_HOME:-}" ]]; then
+    printf '%s\n' "${HF_HOME%/}/xet"
+    return 0
+  fi
+  if [[ -d /workspace/.hf_home/xet ]]; then
+    printf '%s\n' "/workspace/.hf_home/xet"
+    return 0
+  fi
+  printf '%s\n' "${HOME}/.cache/huggingface/xet"
+}
+
+build_hf_repo_cache_dir() {
+  local model_source="$1"
+  if [[ "$model_source" != */* || "$model_source" == /* || "$model_source" == http*://* ]]; then
+    return 1
+  fi
+
+  local hub_cache_dir
+  hub_cache_dir="$(resolve_hf_hub_cache_dir)"
+  printf '%s/models--%s\n' "$hub_cache_dir" "${model_source//\//--}"
+}
+
+emit_local_vllm_progress() {
+  local model_source="${1:-}"
+  local repo_cache_dir=""
+  local cache_bytes=""
+  local incomplete_count=""
+  local incomplete_bytes=""
+  local xet_cache_dir=""
+  local xet_bytes=""
+  local gpu_memory_used=""
+  local summary=""
+
+  if [[ -n "$model_source" ]]; then
+    repo_cache_dir="$(build_hf_repo_cache_dir "$model_source" 2>/dev/null || true)"
+  fi
+
+  if [[ -n "$repo_cache_dir" && -d "$repo_cache_dir" ]]; then
+    cache_bytes="$(du -sb "$repo_cache_dir" 2>/dev/null | awk '{print $1}')"
+    incomplete_count="$(find "$repo_cache_dir" -type f -name '*.incomplete' 2>/dev/null | wc -l | tr -d ' ')"
+    incomplete_bytes="$(
+      find "$repo_cache_dir" -type f -name '*.incomplete' -printf '%s\n' 2>/dev/null \
+        | awk '{sum += $1} END {print sum + 0}'
+    )"
+  fi
+
+  xet_cache_dir="$(resolve_hf_xet_cache_dir)"
+  if [[ -d "$xet_cache_dir" ]]; then
+    xet_bytes="$(du -sb "$xet_cache_dir" 2>/dev/null | awk '{print $1}')"
+  fi
+
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    gpu_memory_used="$(
+      nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null \
+        | head -n 1 \
+        | tr -d ' '
+    )"
+  fi
+
+  if [[ -n "$gpu_memory_used" ]]; then
+    summary+="gpu=${gpu_memory_used}MiB"
+  fi
+  if [[ -n "$cache_bytes" ]]; then
+    [[ -n "$summary" ]] && summary+=", "
+    summary+="hub_cache=$(format_bytes "$cache_bytes")"
+  fi
+  if [[ -n "$incomplete_count" && "$incomplete_count" != "0" ]]; then
+    [[ -n "$summary" ]] && summary+=", "
+    summary+="incomplete=$(format_bytes "${incomplete_bytes:-0}") in ${incomplete_count} file(s)"
+  fi
+  if [[ -n "$xet_bytes" ]]; then
+    [[ -n "$summary" ]] && summary+=", "
+    summary+="xet_cache=$(format_bytes "$xet_bytes")"
+  fi
+
+  if [[ -z "$summary" || "$summary" == "$vllm_last_progress_snapshot" ]]; then
+    return 1
+  fi
+
+  vllm_last_progress_snapshot="$summary"
+  log "Local vLLM progress: $summary"
+  return 0
 }
 
 emit_new_log_lines() {
@@ -422,6 +548,8 @@ wait_for_service_ready() {
     if (( current_lines > seen_lines )); then
       log "$name is still starting; recent log output:"
       seen_lines="$(emit_new_log_lines "$log_path" "$seen_lines" "$vllm_log_tail_lines")"
+      last_notice="$SECONDS"
+    elif [[ "$name" == "Local vLLM" ]] && emit_local_vllm_progress "$vllm_model_source"; then
       last_notice="$SECONDS"
     elif (( SECONDS - last_notice >= 10 )); then
       log "$name is still starting... (waiting up to ${timeout_seconds}s, log: $log_path)"
@@ -1454,6 +1582,28 @@ if [[ "$start_local_vllm" -eq 1 ]]; then
 
   vllm_command=(
     env
+  )
+  for env_name in \
+    VLLM_MODEL_SOURCE \
+    VLLM_BASE_URL \
+    VLLM_SERVED_MODEL_NAME \
+    VLLM_MAX_MODEL_LEN \
+    VLLM_GPU_MEMORY_UTILIZATION \
+    VLLM_MAX_NUM_SEQS \
+    VLLM_DTYPE \
+    VLLM_TENSOR_PARALLEL_SIZE \
+    VLLM_PIPELINE_PARALLEL_SIZE \
+    VLLM_MAX_NUM_BATCHED_TOKENS \
+    VLLM_SWAP_SPACE \
+    VLLM_CPU_OFFLOAD_GB \
+    VLLM_DOWNLOAD_DIR \
+    VLLM_START_TIMEOUT \
+    VLLM_LOG_TAIL_LINES; do
+    if [[ -n "${!env_name:-}" ]]; then
+      vllm_command+=(-u "$env_name")
+    fi
+  done
+  vllm_command+=(
     PYTHONUNBUFFERED=1
     "$venv_python"
     -m
