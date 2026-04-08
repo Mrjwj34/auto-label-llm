@@ -1467,6 +1467,10 @@ write_env_file(active_frontend_env_path(repo_root), frontend_values, header=f"Ge
 PY
 }
 
+if [[ "$llamafactory_cli" == "llamafactory-cli" && -x "$venv_dir/bin/llamafactory-cli" ]]; then
+  llamafactory_cli="$venv_dir/bin/llamafactory-cli"
+fi
+
 write_profile_envs
 
 if [[ "$download_sam3_checkpoint" -eq 1 ]]; then

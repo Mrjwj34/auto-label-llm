@@ -6,6 +6,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import time
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -505,6 +506,11 @@ def _resolve_llamafactory_command(*, required: bool) -> list[str] | None:
     resolved = shutil.which(executable)
     if resolved:
         parts[0] = resolved
+        return parts
+
+    venv_sibling = Path(sys.executable).resolve().parent / executable
+    if venv_sibling.exists():
+        parts[0] = str(venv_sibling)
         return parts
 
     if required:
