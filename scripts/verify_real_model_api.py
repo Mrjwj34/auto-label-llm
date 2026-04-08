@@ -34,6 +34,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--image-path", default="")
     parser.add_argument("--task-timeout", type=float, default=300.0)
     parser.add_argument("--poll-interval", type=float, default=2.0)
+    parser.add_argument("--request-timeout", type=float, default=600.0)
     parser.add_argument("--keep-project", action="store_true")
     parser.add_argument("--labels", nargs="+", default=["cat", "couch"])
     return parser.parse_args()
@@ -221,25 +222,26 @@ def main() -> int:
     args = parse_args()
     backend_base_url = args.backend_base_url.rstrip("/")
     vllm_base_url = args.vllm_base_url.rstrip("/")
+    timeout = httpx.Timeout(args.request_timeout, connect=min(args.request_timeout, 30.0))
 
-    with httpx.Client(timeout=120.0) as client:
+    with httpx.Client(timeout=timeout) as client:
         ensure_backend_health(client, backend_base_url)
         image = load_image(client, args)
         ensure_vllm_health(client, vllm_base_url, args.served_model_name)
         direct_response = run_direct_vllm_chat(client, vllm_base_url, args.served_model_name, image)
-        print(f"[verify-real-model] direct-vllm-chat: {direct_response}")
+        print(f"[verify-real-model] direct-vllm-chat: {direct_response}", flush=True)
 
         patch_system_llm_model(client, backend_base_url, args.served_model_name)
         project_id = create_project(client, backend_base_url)
-        print(f"[verify-real-model] created project: {project_id}")
+        print(f"[verify-real-model] created project: {project_id}", flush=True)
 
         try:
             patch_project_labels(client, backend_base_url, project_id, args.labels)
             image_id = upload_image(client, backend_base_url, project_id, image)
-            print(f"[verify-real-model] uploaded image: {image_id}")
+            print(f"[verify-real-model] uploaded image: {image_id}", flush=True)
 
             task_id = trigger_annotation(client, backend_base_url, project_id)
-            print(f"[verify-real-model] annotation task: {task_id}")
+            print(f"[verify-real-model] annotation task: {task_id}", flush=True)
             task_payload = wait_for_task_success(
                 client,
                 backend_base_url,
@@ -247,7 +249,7 @@ def main() -> int:
                 timeout_seconds=args.task_timeout,
                 poll_interval=args.poll_interval,
             )
-            print(f"[verify-real-model] task success: {task_payload}")
+            print(f"[verify-real-model] task success: {task_payload}", flush=True)
 
             annotations = fetch_annotations(client, backend_base_url, image_id)
             if not annotations:
@@ -266,13 +268,13 @@ def main() -> int:
                 raise RuntimeError(f"expected real openai_compatible annotations, got: {provider_mismatches!r}")
 
             labels = [str(annotation.get("label")) for annotation in annotations]
-            print(f"[verify-real-model] annotations: count={len(annotations)} labels={labels}")
+            print(f"[verify-real-model] annotations: count={len(annotations)} labels={labels}", flush=True)
         finally:
             if not args.keep_project:
                 delete_project(client, backend_base_url, project_id)
-                print(f"[verify-real-model] deleted project: {project_id}")
+                print(f"[verify-real-model] deleted project: {project_id}", flush=True)
 
-    print("[verify-real-model] success")
+    print("[verify-real-model] success", flush=True)
     return 0
 
 
