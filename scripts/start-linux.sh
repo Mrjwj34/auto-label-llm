@@ -548,8 +548,12 @@ wait_for_service_ready() {
     if (( current_lines > seen_lines )); then
       log "$name is still starting; recent log output:"
       seen_lines="$(emit_new_log_lines "$log_path" "$seen_lines" "$vllm_log_tail_lines")"
+      if [[ "$name" == "Local vLLM" ]]; then
+        deadline=$((SECONDS + timeout_seconds))
+      fi
       last_notice="$SECONDS"
     elif [[ "$name" == "Local vLLM" ]] && emit_local_vllm_progress "$vllm_model_source"; then
+      deadline=$((SECONDS + timeout_seconds))
       last_notice="$SECONDS"
     elif (( SECONDS - last_notice >= 10 )); then
       log "$name is still starting... (waiting up to ${timeout_seconds}s, log: $log_path)"
