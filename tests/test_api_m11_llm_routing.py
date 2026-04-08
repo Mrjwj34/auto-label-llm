@@ -285,7 +285,7 @@ def test_openai_failure_falls_back_to_stub_and_keeps_route_metadata(
     assert "fallback" in str(final_task["message"])
 
     assert len(FakeVLLMClient.requests) == 1
-    assert FakeVLLMClient.requests[0]["json"]["model"] == "qwen3-vl-4b"
+    assert FakeVLLMClient.requests[0]["json"]["model"] == "qwen3-vl-8b"
 
     annotations = openai_client.get(f"/api/images/{image_id}/annotations")
     assert annotations.status_code == 200
@@ -296,7 +296,7 @@ def test_openai_failure_falls_back_to_stub_and_keeps_route_metadata(
     assert inference["provider"] == "stub"
     assert inference["requested_backend"] == "openai_compatible"
     assert inference["effective_model_tag"] == "base"
-    assert inference["request_model_name"] == "qwen3-vl-4b"
+    assert inference["request_model_name"] == "qwen3-vl-8b"
     assert inference["fallback_used"] is True
     assert "vllm offline" in str(inference["warning"])
 

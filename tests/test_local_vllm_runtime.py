@@ -68,6 +68,7 @@ def test_ensure_local_managed_vllm_started_adds_enable_lora_and_updates_state(
     monkeypatch.setattr(local_vllm_runtime.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(local_vllm_runtime, "_wait_for_vllm_ready", lambda *args, **kwargs: None)
 
+    assert get_settings().vllm_base_url == "http://127.0.0.1:8001"
     monkeypatch.setenv("VLLM_BASE_URL", "will-be-unset")
     result = local_vllm_runtime.ensure_local_managed_vllm_started(enable_lora=True, timeout=5)
 
