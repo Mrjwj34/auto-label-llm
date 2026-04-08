@@ -31,6 +31,7 @@ vllm_port="8001"
 llamafactory_cli="${LLAMAFACTORY_CLI:-llamafactory-cli}"
 managed_log_dir=""
 declare -a managed_pids=()
+started_pid=""
 
 usage() {
   cat <<'EOF'
@@ -639,7 +640,12 @@ import sys
 
 import redis
 
-client = redis.Redis.from_url(sys.argv[1], decode_responses=True)
+client = redis.Redis.from_url(
+    sys.argv[1],
+    decode_responses=True,
+    socket_connect_timeout=2.0,
+    socket_timeout=2.0,
+)
 client.ping()
 PY
 }
@@ -653,9 +659,8 @@ start_service() {
     cd "$repo_root"
     "$@"
   ) >"$log_path" 2>&1 &
-  local pid=$!
-  managed_pids+=("$pid")
-  printf '%s' "$pid"
+  started_pid="$!"
+  managed_pids+=("$started_pid")
 }
 
 redis_reused=0
@@ -664,7 +669,8 @@ if ping_redis_url "$redis_url" >/dev/null 2>&1; then
   log "Reusing existing Redis: $redis_url"
 else
   command -v redis-server >/dev/null 2>&1 || die "redis-server was not found."
-  redis_pid="$(start_service redis redis-server --save '' --appendonly no --bind "$redis_host" --port "$redis_port" --protected-mode no)"
+  start_service redis redis-server --save '' --appendonly no --bind "$redis_host" --port "$redis_port" --protected-mode no
+  redis_pid="$started_pid"
   sleep 0.5
   ping_redis_url "$redis_url" >/dev/null 2>&1 || {
     tail_last_lines "$managed_log_dir/redis.log"
@@ -713,7 +719,8 @@ print(payload.get("VLLM_MODEL_NAME", "qwen3-vl-4b"))
 PY
 )"
   fi
-  vllm_pid="$(start_service vllm "$venv_python" -m vllm.entrypoints.openai.api_server --model "$vllm_model_source" --served-model-name "$vllm_served_model_name" --host "$vllm_host" --port "$vllm_port")"
+  start_service vllm "$venv_python" -m vllm.entrypoints.openai.api_server --model "$vllm_model_source" --served-model-name "$vllm_served_model_name" --host "$vllm_host" --port "$vllm_port"
+  vllm_pid="$started_pid"
   wait_for_http "http://${vllm_host}:${vllm_port}/health" 180 >/dev/null 2>&1 || wait_for_http "http://${vllm_host}:${vllm_port}/v1/models" 180 >/dev/null 2>&1 || {
     tail_last_lines "$managed_log_dir/vllm.log"
     die "Local vLLM failed to become healthy."
@@ -727,7 +734,8 @@ elif [[ "$annotation_backend" == "openai_compatible" ]]; then
 fi
 
 if [[ "$embedded_worker" -eq 0 ]]; then
-  worker_pid="$(start_service worker "$venv_python" -m backend.task_worker_main)"
+  start_service worker "$venv_python" -m backend.task_worker_main
+  worker_pid="$started_pid"
   sleep 0.5
   if ! kill -0 "$worker_pid" >/dev/null 2>&1; then
     tail_last_lines "$managed_log_dir/worker.log"
@@ -738,7 +746,8 @@ else
   log "Using embedded task worker."
 fi
 
-backend_pid="$(start_service backend "$venv_python" -m uvicorn backend.main:app --host "$api_host" --port "$api_port")"
+start_service backend "$venv_python" -m uvicorn backend.main:app --host "$api_host" --port "$api_port"
+backend_pid="$started_pid"
 wait_for_http "http://${api_host}:${api_port}/healthz" 60 >/dev/null 2>&1 || {
   tail_last_lines "$managed_log_dir/backend.log"
   die "Backend did not become healthy."
@@ -746,7 +755,8 @@ wait_for_http "http://${api_host}:${api_port}/healthz" 60 >/dev/null 2>&1 || {
 log "Backend started with pid $backend_pid"
 
 if [[ "$start_frontend" -eq 1 ]]; then
-  frontend_pid="$(start_service frontend bash -lc "cd '$repo_root/frontend' && npm run dev -- --host '$frontend_host' --port '$frontend_port' --strictPort")"
+  start_service frontend bash -lc "cd '$repo_root/frontend' && npm run dev -- --host '$frontend_host' --port '$frontend_port' --strictPort"
+  frontend_pid="$started_pid"
   wait_for_http "http://${frontend_host}:${frontend_port}" 90 >/dev/null 2>&1 || {
     tail_last_lines "$managed_log_dir/frontend.log"
     die "Frontend did not become healthy."
