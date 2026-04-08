@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import signal
 import sys
 from pathlib import Path
@@ -7,7 +8,10 @@ from pathlib import Path
 import pytest
 
 from backend.config import get_settings
+from backend.models.project import Project
 from backend.services import local_vllm_runtime
+from backend.services import vllm_client
+from backend.services.vllm_client import InferenceRoute
 
 
 @pytest.fixture()
@@ -107,3 +111,48 @@ def test_stop_local_managed_vllm_marks_state_stopped(local_vllm_env: Path, monke
     stored = local_vllm_runtime.read_local_vllm_state(local_vllm_env)
     assert stored is not None
     assert stored["pid"] is None
+
+
+def test_local_runtime_sync_boots_managed_service_and_loads_lora(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(vllm_client, "is_local_vllm_managed_for_settings", lambda settings: True)
+    monkeypatch.setattr(
+        vllm_client,
+        "ensure_local_managed_vllm_started",
+        lambda *, enable_lora, timeout=None: {"status": "started", "pid": 4321, "message": "started"},
+    )
+
+    @contextmanager
+    def fake_reload_lock(*args, **kwargs):
+        yield
+
+    monkeypatch.setattr(vllm_client.GPULock, "acquire_model_reload", fake_reload_lock)
+    monkeypatch.setattr(
+        vllm_client,
+        "_sync_vllm_runtime_actions",
+        lambda *args, **kwargs: {"actions": [{"action": "load", "model_tag": "lora:7"}]},
+    )
+
+    project = Project(id=1, name="demo", task_type="detection", config="{}")
+    route = InferenceRoute(
+        requested_model_tag="lora:7",
+        effective_model_tag="lora:7",
+        request_model_name="lora:7",
+        base_model_name="qwen3-vl-8b",
+        resolved_project_profile="test_real_stack",
+        route_kind="lora",
+        adapter_path="models/lora/7",
+        finetune_job_id=7,
+    )
+
+    result = vllm_client._sync_local_managed_vllm_runtime(
+        project,
+        previous_model_tag="base",
+        target_route=route,
+        db=None,
+    )
+
+    assert result is not None
+    assert result["mode"] == "local_managed_vllm"
+    assert result["status"] == "synced"
+    assert result["actions"][0]["action"] == "start"
+    assert result["actions"][1]["action"] == "load"
