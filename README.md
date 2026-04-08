@@ -35,11 +35,11 @@ bash scripts/start-linux.sh --profile dev_low_resource --run-tests
 bash scripts/start-linux.sh --profile test_real_stack --setup-only --with-sam3 --with-llamafactory
 
 # 真正的本地真实栈联调：本机起 vLLM + SAM3 + LLaMA-Factory
-VLLM_MODEL_SOURCE=Qwen/Qwen2.5-VL-7B-Instruct \
+VLLM_MODEL_SOURCE=Qwen/Qwen3-VL-8B-Instruct-FP8 \
 bash scripts/start-linux.sh --profile test_real_stack --with-vllm --with-sam3 --with-llamafactory
 
 # 如果显存比较紧，可以继续压低 vLLM 参数，或透传额外参数
-VLLM_MODEL_SOURCE=Qwen/Qwen2.5-VL-7B-Instruct \
+VLLM_MODEL_SOURCE=Qwen/Qwen3-VL-8B-Instruct-FP8 \
 bash scripts/start-linux.sh --profile test_real_stack --with-vllm \
   --vllm-max-model-len 2048 \
   --vllm-gpu-memory-utilization 0.72 \
@@ -151,7 +151,7 @@ npm run dev
 如果你要在 Linux 上把真实模型暴露成当前项目配置里的逻辑名称，直接让统一启动脚本接管本地 vLLM：
 
 ```bash
-VLLM_MODEL_SOURCE=Qwen/Qwen2.5-VL-7B-Instruct \
+VLLM_MODEL_SOURCE=Qwen/Qwen3-VL-8B-Instruct-FP8 \
 bash scripts/start-linux.sh --profile test_real_stack --with-vllm
 ```
 

@@ -98,6 +98,7 @@ setup_log_dir=""
 managed_log_dir=""
 state_dir=""
 install_state_dir=""
+vllm_help_cache_path=""
 
 declare -a managed_pids=()
 declare -a vllm_extra_args=()
@@ -119,7 +120,7 @@ Recommended smoke path:
   bash scripts/start-linux.sh --profile dev_low_resource --run-tests
 
 Recommended real-stack path:
-  VLLM_MODEL_SOURCE=Qwen/Qwen2.5-VL-7B-Instruct \
+  VLLM_MODEL_SOURCE=Qwen/Qwen3-VL-8B-Instruct-FP8 \
   bash scripts/start-linux.sh --profile test_real_stack --with-vllm --with-sam3 --with-llamafactory
 
 Options:
@@ -464,6 +465,43 @@ else:
     print(f"{origin}/health")
     print(f"{origin}/v1/models")
 PY
+}
+
+ensure_vllm_help_cache() {
+  [[ -n "$vllm_help_cache_path" ]] || vllm_help_cache_path="$setup_log_dir/vllm-api-server-help.txt"
+  if [[ -s "$vllm_help_cache_path" ]]; then
+    return 0
+  fi
+
+  "$venv_python" -m vllm.entrypoints.openai.api_server --help >"$vllm_help_cache_path" 2>&1 || {
+    tail_last_lines "$vllm_help_cache_path" 80
+    die "Failed to inspect local vLLM CLI help."
+  }
+}
+
+vllm_supports_argument() {
+  local argument="$1"
+  ensure_vllm_help_cache
+  grep -F -- "$argument" "$vllm_help_cache_path" >/dev/null 2>&1
+}
+
+append_vllm_value_option() {
+  local option="$1"
+  shift
+  if vllm_supports_argument "$option"; then
+    vllm_command+=("$option" "$@")
+  else
+    warn "Skipping unsupported vLLM option for this installed version: $option"
+  fi
+}
+
+append_vllm_flag_option() {
+  local option="$1"
+  if vllm_supports_argument "$option"; then
+    vllm_command+=("$option")
+  else
+    warn "Skipping unsupported vLLM flag for this installed version: $option"
+  fi
 }
 
 ping_redis_url() {
@@ -1398,6 +1436,7 @@ if [[ "$start_local_vllm" -eq 1 ]]; then
 
   vllm_base_url="http://${vllm_host}:${vllm_port}"
   write_profile_envs
+  ensure_vllm_help_cache
 
   log "Resolved local vLLM settings:"
   log "  model_source=$vllm_model_source"
@@ -1425,41 +1464,41 @@ if [[ "$start_local_vllm" -eq 1 ]]; then
     --port "$vllm_port"
   )
   if [[ -n "$vllm_max_model_len" ]]; then
-    vllm_command+=(--max-model-len "$vllm_max_model_len")
+    append_vllm_value_option --max-model-len "$vllm_max_model_len"
   fi
   if [[ -n "$vllm_gpu_memory_utilization" ]]; then
-    vllm_command+=(--gpu-memory-utilization "$vllm_gpu_memory_utilization")
+    append_vllm_value_option --gpu-memory-utilization "$vllm_gpu_memory_utilization"
   fi
   if [[ -n "$vllm_max_num_seqs" ]]; then
-    vllm_command+=(--max-num-seqs "$vllm_max_num_seqs")
+    append_vllm_value_option --max-num-seqs "$vllm_max_num_seqs"
   fi
   if [[ -n "$vllm_dtype" ]]; then
-    vllm_command+=(--dtype "$vllm_dtype")
+    append_vllm_value_option --dtype "$vllm_dtype"
   fi
   if [[ -n "$vllm_tensor_parallel_size" ]]; then
-    vllm_command+=(--tensor-parallel-size "$vllm_tensor_parallel_size")
+    append_vllm_value_option --tensor-parallel-size "$vllm_tensor_parallel_size"
   fi
   if [[ -n "$vllm_pipeline_parallel_size" ]]; then
-    vllm_command+=(--pipeline-parallel-size "$vllm_pipeline_parallel_size")
+    append_vllm_value_option --pipeline-parallel-size "$vllm_pipeline_parallel_size"
   fi
   if [[ -n "$vllm_max_num_batched_tokens" ]]; then
-    vllm_command+=(--max-num-batched-tokens "$vllm_max_num_batched_tokens")
+    append_vllm_value_option --max-num-batched-tokens "$vllm_max_num_batched_tokens"
   fi
   if [[ -n "$vllm_swap_space" ]]; then
-    vllm_command+=(--swap-space "$vllm_swap_space")
+    append_vllm_value_option --swap-space "$vllm_swap_space"
   fi
   if [[ -n "$vllm_cpu_offload_gb" ]]; then
-    vllm_command+=(--cpu-offload-gb "$vllm_cpu_offload_gb")
+    append_vllm_value_option --cpu-offload-gb "$vllm_cpu_offload_gb"
   fi
   if [[ -n "$vllm_download_dir" ]]; then
     mkdir -p "$vllm_download_dir"
-    vllm_command+=(--download-dir "$vllm_download_dir")
+    append_vllm_value_option --download-dir "$vllm_download_dir"
   fi
   if [[ "$vllm_enforce_eager" -eq 1 ]]; then
-    vllm_command+=(--enforce-eager)
+    append_vllm_flag_option --enforce-eager
   fi
   if [[ "$vllm_disable_custom_all_reduce" -eq 1 ]]; then
-    vllm_command+=(--disable-custom-all-reduce)
+    append_vllm_flag_option --disable-custom-all-reduce
   fi
   if [[ ${#vllm_extra_args[@]} -gt 0 ]]; then
     vllm_command+=("${vllm_extra_args[@]}")
