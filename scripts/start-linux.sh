@@ -254,22 +254,29 @@ count_log_lines() {
 
 format_bytes() {
   local bytes="${1:-0}"
-  awk -v bytes="$bytes" '
-    BEGIN {
-      split("B KiB MiB GiB TiB PiB", units, " ")
-      unit_index = 1
-      value = bytes + 0
-      while (value >= 1024 && unit_index < 6) {
-        value /= 1024
-        unit_index += 1
-      }
-      if (value >= 10 || unit_index == 1) {
-        printf "%.0f%s", value, units[unit_index]
-      } else {
-        printf "%.1f%s", value, units[unit_index]
-      }
-    }
-  '
+  local units=("B" "KiB" "MiB" "GiB" "TiB" "PiB")
+  local unit_index=0
+  local whole=0
+  local remainder=0
+  local decimal=0
+
+  if [[ "$bytes" =~ ^[0-9]+$ ]]; then
+    whole="$bytes"
+  fi
+
+  while (( whole >= 1024 && unit_index < ${#units[@]} - 1 )); do
+    remainder=$((whole % 1024))
+    whole=$((whole / 1024))
+    unit_index=$((unit_index + 1))
+  done
+
+  if (( unit_index == 0 || whole >= 10 || remainder == 0 )); then
+    printf '%s%s' "$whole" "${units[$unit_index]}"
+    return 0
+  fi
+
+  decimal=$(((remainder * 10) / 1024))
+  printf '%s.%s%s' "$whole" "$decimal" "${units[$unit_index]}"
 }
 
 resolve_hf_hub_cache_dir() {
