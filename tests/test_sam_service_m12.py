@@ -147,6 +147,50 @@ def test_postprocess_fallback_without_opencv(monkeypatch, tmp_path):
     assert processed.mask_path is not None
 
 
+def test_postprocess_keeps_valid_polygon_when_simplify_is_extreme(monkeypatch, tmp_path):
+    root_dir = tmp_path / "runtime-root"
+    data_dir = root_dir / "data"
+    image_path = data_dir / "projects" / "1" / "images" / "1_sample.png"
+    _write_sample_image(image_path, size=(640, 400))
+
+    monkeypatch.setenv("ROOT_DIR", str(root_dir))
+    monkeypatch.setenv("DATA_DIR", str(data_dir))
+    get_settings.cache_clear()
+
+    image = Image(
+        id=1,
+        project_id=1,
+        filename=image_path.name,
+        file_path=image_path.as_posix(),
+        width=640,
+        height=400,
+        split="train",
+        status="done",
+    )
+    project = Project(
+        id=1,
+        name="extreme-simplify",
+        task_type="segmentation",
+        config=json.dumps({"postprocess": {"enable_dp_simplify": True, "epsilon_ratio": 0.2}}),
+    )
+
+    mask = PILImage.new("L", (640, 400), color=0)
+    draw = ImageDraw.Draw(mask)
+    draw.rounded_rectangle((110, 90, 520, 320), radius=42, fill=255)
+
+    processed = apply_project_postprocess(
+        project,
+        image,
+        mask=mask,
+        bbox=[0.15, 0.2, 0.8, 0.82],
+        provider="sam_stub:sam3:cpu",
+        score=0.9,
+    )
+
+    assert processed.polygon is not None
+    assert len(processed.polygon) >= 3
+
+
 def test_sam_service_prefers_env_checkpoint_override(monkeypatch, tmp_path):
     root_dir = tmp_path / "runtime-root"
     checkpoint_path = root_dir / "custom" / "sam3.1_multiplex_large.pt"

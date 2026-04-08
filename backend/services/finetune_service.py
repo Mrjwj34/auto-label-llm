@@ -84,21 +84,23 @@ def generate_lora_config(project: Project, job_id: int) -> dict[str, Any]:
     model_root, _log_root = _settings_paths()
     project_settings = load_project_settings(project)
     llm_settings = project_settings.get("llm", {}) if isinstance(project_settings.get("llm"), dict) else {}
-    base_model_name = str(llm_settings.get("base_model") or get_settings().vllm_model_name).strip()
-    if not base_model_name:
+    requested_base_model = str(llm_settings.get("base_model") or get_settings().vllm_model_name).strip()
+    if not requested_base_model:
         raise AppError(400, "no base LLM model configured for finetune")
+    model_name_or_path = _resolve_finetune_model_name(requested_base_model)
 
     workspace_dir = _job_workspace_root(project.id, job_id)
     output_dir = (model_root / str(job_id)).resolve()
     dataset_name = f"project_{project.id}_train"
-    template = _resolve_llamafactory_template(base_model_name)
+    template = _resolve_llamafactory_template(model_name_or_path)
     precision = _resolve_training_precision(vram_gb)
 
     return {
         "project_id": project.id,
         "job_id": job_id,
         "runner_backend": "pending",
-        "model_name_or_path": base_model_name,
+        "model_name_or_path": model_name_or_path,
+        "requested_base_model": requested_base_model,
         "template": template,
         "finetuning_type": "lora",
         "stage": "sft",
@@ -442,25 +444,34 @@ def _prepare_training_assets(project: Project, job: FinetuneJob, config: dict[st
 
 
 def _build_train_runtime_config(config: dict[str, Any]) -> dict[str, Any]:
-    runtime = dict(config)
-    runtime["dataset_dir"] = _resolve_path(str(config.get("dataset_dir") or "")).as_posix()
-    runtime["dataset_info_path"] = _resolve_path(str(config.get("dataset_info_path") or "")).as_posix()
-    runtime["output_dir"] = _resolve_path(str(config.get("output_dir") or "")).as_posix()
-    runtime["do_train"] = True
-    runtime["stage"] = "sft"
-    runtime["finetuning_type"] = "lora"
-    runtime["plot_loss"] = bool(config.get("plot_loss", True))
-    runtime["report_to"] = str(config.get("report_to") or "none")
-
     precision = str(config.get("precision") or "fp16")
-    runtime["bf16"] = precision == "bf16"
-    runtime["fp16"] = precision == "fp16"
-    runtime["logging_steps"] = int(config.get("logging_steps") or 1)
-    runtime["save_steps"] = int(config.get("save_steps") or 50)
-    runtime["preprocessing_num_workers"] = int(config.get("preprocessing_num_workers") or 1)
-    runtime["overwrite_output_dir"] = bool(config.get("overwrite_output_dir", True))
-    runtime["overwrite_cache"] = bool(config.get("overwrite_cache", True))
-    return runtime
+    return {
+        "model_name_or_path": str(config.get("model_name_or_path") or ""),
+        "template": str(config.get("template") or "default"),
+        "finetuning_type": str(config.get("finetuning_type") or "lora"),
+        "stage": str(config.get("stage") or "sft"),
+        "do_train": True,
+        "dataset": str(config.get("dataset") or ""),
+        # LLaMA-Factory discovers dataset_info.json under dataset_dir automatically.
+        "dataset_dir": _resolve_path(str(config.get("dataset_dir") or "")).as_posix(),
+        "output_dir": _resolve_path(str(config.get("output_dir") or "")).as_posix(),
+        "per_device_train_batch_size": int(config.get("per_device_train_batch_size") or 1),
+        "gradient_accumulation_steps": int(config.get("gradient_accumulation_steps") or 8),
+        "num_train_epochs": int(config.get("num_train_epochs") or 3),
+        "learning_rate": float(config.get("learning_rate") or 1e-4),
+        "cutoff_len": int(config.get("cutoff_len") or 4096),
+        "logging_steps": int(config.get("logging_steps") or 1),
+        "save_steps": int(config.get("save_steps") or 50),
+        "plot_loss": bool(config.get("plot_loss", True)),
+        "report_to": str(config.get("report_to") or "none"),
+        "warmup_ratio": float(config.get("warmup_ratio") or 0.0),
+        "lr_scheduler_type": str(config.get("lr_scheduler_type") or "cosine"),
+        "preprocessing_num_workers": int(config.get("preprocessing_num_workers") or 1),
+        "overwrite_output_dir": bool(config.get("overwrite_output_dir", True)),
+        "overwrite_cache": bool(config.get("overwrite_cache", True)),
+        "bf16": precision == "bf16",
+        "fp16": precision == "fp16",
+    }
 
 
 def _load_job_config(job: FinetuneJob) -> dict[str, Any]:
@@ -655,11 +666,26 @@ def _write_adapter_metadata(output_dir: Path, payload: dict[str, Any]) -> None:
 
 def _resolve_llamafactory_template(base_model_name: str) -> str:
     lowered = base_model_name.casefold()
+    if "qwen3" in lowered and "vl" in lowered:
+        return "qwen3_vl"
     if "qwen" in lowered and "vl" in lowered:
         return "qwen2_vl"
     if "qwen" in lowered:
         return "qwen"
     return "default"
+
+
+def _resolve_finetune_model_name(base_model_name: str) -> str:
+    settings = get_settings()
+    requested = str(base_model_name or "").strip()
+    if not requested:
+        return ""
+
+    served_name = str(settings.vllm_model_name or "").strip()
+    source_name = str(settings.vllm_model_source or "").strip()
+    if source_name and served_name and requested == served_name:
+        return source_name
+    return requested
 
 
 def _resolve_training_precision(vram_gb: float) -> str:

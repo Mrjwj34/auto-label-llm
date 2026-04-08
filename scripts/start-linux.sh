@@ -1413,7 +1413,7 @@ elif [[ "$setup_only" -ne 1 && "$start_frontend" -eq 1 && ! -d "$repo_root/front
 fi
 
 write_profile_envs() {
-  "$venv_python" - "$repo_root" "$profile" "$api_host" "$api_port" "$frontend_host" "$frontend_port" "$redis_url" "$vllm_base_url" "$embedded_worker" "$llamafactory_cli" <<'PY'
+  "$venv_python" - "$repo_root" "$profile" "$api_host" "$api_port" "$frontend_host" "$frontend_port" "$redis_url" "$vllm_base_url" "$embedded_worker" "$llamafactory_cli" "$vllm_model_source" <<'PY'
 from __future__ import annotations
 
 import json
@@ -1438,6 +1438,7 @@ redis_url = sys.argv[7]
 vllm_base_url = sys.argv[8]
 embedded_worker = sys.argv[9] == "1"
 llamafactory_cli = sys.argv[10]
+vllm_model_source = sys.argv[11]
 
 profile = read_system_profile(profile_name, root_dir=repo_root)
 backend_values = dict(profile["backend"])
@@ -1458,6 +1459,8 @@ backend_values["TASK_EMBEDDED_WORKER"] = "true" if embedded_worker else "false"
 backend_values["CORS_ALLOW_ORIGINS"] = json.dumps(frontend_origins, ensure_ascii=False)
 backend_values["VLLM_BASE_URL"] = vllm_base_url
 backend_values["LLAMAFACTORY_CLI"] = llamafactory_cli
+if vllm_model_source:
+    backend_values["VLLM_MODEL_SOURCE"] = vllm_model_source
 
 frontend_values["VITE_APP_PROFILE"] = profile_name
 frontend_values["VITE_API_BASE_URL"] = f"http://{api_host}:{api_port}"

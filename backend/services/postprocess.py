@@ -145,16 +145,15 @@ def _polygon_from_mask(
     enable_dp_simplify: bool,
     epsilon_ratio: float,
 ) -> list[list[float]] | None:
+    raw_polygon: list[list[float]] | None = None
     if _cv2 is not None and _np is not None:
-        polygon = _polygon_from_mask_opencv(mask, enable_dp_simplify=enable_dp_simplify, epsilon_ratio=epsilon_ratio)
-        if polygon:
-            return polygon
+        raw_polygon = _polygon_from_mask_opencv(mask, enable_dp_simplify=False, epsilon_ratio=epsilon_ratio)
+    if raw_polygon is None:
+        raw_polygon = _polygon_from_mask_scan(mask)
 
-    polygon = _polygon_from_mask_scan(mask)
-    if polygon and enable_dp_simplify:
-        epsilon = max(1e-4, _perimeter(polygon) * max(0.0, epsilon_ratio))
-        polygon = _simplify_closed_polygon(polygon, epsilon=epsilon)
-    return polygon
+    if raw_polygon is None:
+        return None
+    return _simplify_polygon_or_fallback(raw_polygon, enable_dp_simplify=enable_dp_simplify, epsilon_ratio=epsilon_ratio)
 
 
 def _polygon_from_mask_opencv(
@@ -272,6 +271,25 @@ def _bbox_to_polygon(bbox: list[float] | None) -> list[list[float]] | None:
         return None
     xmin, ymin, xmax, ymax = bbox
     return [[xmin, ymin], [xmax, ymin], [xmax, ymax], [xmin, ymax]]
+
+
+def _simplify_polygon_or_fallback(
+    polygon: list[list[float]],
+    *,
+    enable_dp_simplify: bool,
+    epsilon_ratio: float,
+) -> list[list[float]] | None:
+    normalized = _normalize_points(polygon)
+    if len(normalized) < 3:
+        return None
+    if not enable_dp_simplify:
+        return normalized
+
+    epsilon = max(1e-4, _perimeter(normalized) * max(0.0, epsilon_ratio))
+    simplified = _simplify_closed_polygon(normalized, epsilon=epsilon)
+    if len(simplified) >= 3:
+        return simplified
+    return normalized
 
 
 def _normalize_bbox(bbox: list[float] | None) -> list[float] | None:

@@ -220,3 +220,42 @@ def test_finetune_job_can_run_llamafactory_subprocess(client, monkeypatch):
     metrics = final_status["metrics"]
     assert len(metrics) >= 3
     assert metrics[-1]["loss"] is not None
+
+
+def test_build_train_runtime_config_excludes_internal_metadata():
+    runtime = finetune_service._build_train_runtime_config(
+        {
+            "project_id": 7,
+            "job_id": 11,
+            "runner_backend": "llamafactory",
+            "model_name_or_path": "Qwen/Qwen3-VL-8B-Instruct-FP8",
+            "requested_base_model": "qwen3-vl-8b",
+            "template": "qwen3_vl",
+            "dataset": "project_7_train",
+            "dataset_dir": "data/projects/7/exports/finetune/job_11",
+            "dataset_info_path": "data/projects/7/exports/finetune/job_11/dataset_info.json",
+            "train_config_path": "data/projects/7/exports/finetune/job_11/llamafactory-train.yaml",
+            "dataset_path": "data/projects/7/exports/finetune/job_11/project_7_train.jsonl",
+            "output_dir": "models/lora/11",
+            "precision": "bf16",
+        }
+    )
+
+    assert runtime["model_name_or_path"] == "Qwen/Qwen3-VL-8B-Instruct-FP8"
+    assert runtime["template"] == "qwen3_vl"
+    assert runtime["bf16"] is True
+    assert runtime["fp16"] is False
+    assert "dataset_info_path" not in runtime
+    assert "dataset_path" not in runtime
+    assert "train_config_path" not in runtime
+    assert "project_id" not in runtime
+    assert "job_id" not in runtime
+
+
+def test_resolve_finetune_model_name_prefers_vllm_model_source(monkeypatch):
+    monkeypatch.setenv("VLLM_MODEL_NAME", "qwen3-vl-8b")
+    monkeypatch.setenv("VLLM_MODEL_SOURCE", "Qwen/Qwen3-VL-8B-Instruct-FP8")
+    get_settings.cache_clear()
+
+    assert finetune_service._resolve_finetune_model_name("qwen3-vl-8b") == "Qwen/Qwen3-VL-8B-Instruct-FP8"
+    assert finetune_service._resolve_llamafactory_template("Qwen/Qwen3-VL-8B-Instruct-FP8") == "qwen3_vl"
