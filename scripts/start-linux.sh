@@ -257,16 +257,16 @@ format_bytes() {
   awk -v bytes="$bytes" '
     BEGIN {
       split("B KiB MiB GiB TiB PiB", units, " ")
-      index = 1
+      unit_index = 1
       value = bytes + 0
-      while (value >= 1024 && index < 6) {
+      while (value >= 1024 && unit_index < 6) {
         value /= 1024
-        index += 1
+        unit_index += 1
       }
-      if (value >= 10 || index == 1) {
-        printf "%.0f%s", value, units[index]
+      if (value >= 10 || unit_index == 1) {
+        printf "%.0f%s", value, units[unit_index]
       } else {
-        printf "%.1f%s", value, units[index]
+        printf "%.1f%s", value, units[unit_index]
       }
     }
   '
