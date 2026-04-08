@@ -791,9 +791,9 @@ start_service() {
   (
     cd "$repo_root"
     if command -v stdbuf >/dev/null 2>&1; then
-      stdbuf -oL -eL "$@"
+      exec stdbuf -oL -eL "$@"
     else
-      "$@"
+      exec "$@"
     fi
   ) >"$log_path" 2>&1 &
   started_pid="$!"
