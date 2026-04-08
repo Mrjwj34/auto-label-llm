@@ -28,6 +28,9 @@ vllm_base_url="${VLLM_BASE_URL:-}"
 vllm_served_model_name=""
 vllm_host="127.0.0.1"
 vllm_port="8001"
+vllm_max_model_len="${VLLM_MAX_MODEL_LEN:-}"
+vllm_gpu_memory_utilization="${VLLM_GPU_MEMORY_UTILIZATION:-}"
+vllm_max_num_seqs="${VLLM_MAX_NUM_SEQS:-}"
 llamafactory_cli="${LLAMAFACTORY_CLI:-llamafactory-cli}"
 managed_log_dir=""
 declare -a managed_pids=()
@@ -74,6 +77,9 @@ Options:
   --vllm-served-model-name <v>   Served model name for local vLLM; defaults to profile VLLM_MODEL_NAME
   --vllm-host <host>             Local vLLM bind host. Default: 127.0.0.1
   --vllm-port <port>             Local vLLM bind port. Default: 8001
+  --vllm-max-model-len <n>       Optional vLLM max model length. Default: VLLM_MAX_MODEL_LEN or profile backend value
+  --vllm-gpu-memory-utilization  Optional vLLM GPU memory fraction. Default: VLLM_GPU_MEMORY_UTILIZATION or profile backend value
+  --vllm-max-num-seqs <n>        Optional vLLM max concurrent sequences. Default: VLLM_MAX_NUM_SEQS or profile backend value
   --llamafactory-cli <command>   CLI used by backend FINETUNE_BACKEND=auto. Default: llamafactory-cli
   --download-sam3-checkpoint     Download the configured SAM3 checkpoint family
   --sam3-version <sam3|sam3.1>   Checkpoint family when downloading; auto by profile
@@ -92,6 +98,9 @@ Environment overrides:
   SAM3_PIP_SPEC          SAM3 packages. Default: "git+https://github.com/facebookresearch/sam3.git huggingface_hub"
   VLLM_PIP_SPEC          vLLM packages. Default: "vllm"
   LLAMAFACTORY_PIP_SPEC  LLaMA-Factory package. Default: "llamafactory"
+  VLLM_MAX_MODEL_LEN             Optional vLLM max context length override
+  VLLM_GPU_MEMORY_UTILIZATION    Optional vLLM GPU memory fraction override
+  VLLM_MAX_NUM_SEQS              Optional vLLM max concurrent sequences override
 EOF
 }
 
@@ -205,6 +214,18 @@ while [[ $# -gt 0 ]]; do
       ;;
     --vllm-port)
       vllm_port="$2"
+      shift 2
+      ;;
+    --vllm-max-model-len)
+      vllm_max_model_len="$2"
+      shift 2
+      ;;
+    --vllm-gpu-memory-utilization)
+      vllm_gpu_memory_utilization="$2"
+      shift 2
+      ;;
+    --vllm-max-num-seqs)
+      vllm_max_num_seqs="$2"
       shift 2
       ;;
     --llamafactory-cli)
@@ -680,7 +701,7 @@ else
 fi
 
 start_local_vllm=0
-annotation_backend="$("$venv_python" - "$repo_root" <<'PY'
+readarray -t _runtime_env_parts < <("$venv_python" - "$repo_root" <<'PY'
 from __future__ import annotations
 
 import sys
@@ -693,8 +714,17 @@ from backend.services.system_profiles import parse_env_file
 
 payload = parse_env_file(root / ".env.active")
 print(payload.get("ANNOTATION_BACKEND", "stub"))
+print(payload.get("VLLM_MODEL_NAME", "qwen3-vl-4b"))
+print(payload.get("VLLM_MAX_MODEL_LEN", ""))
+print(payload.get("VLLM_GPU_MEMORY_UTILIZATION", ""))
+print(payload.get("VLLM_MAX_NUM_SEQS", ""))
 PY
-)"
+)
+annotation_backend="${_runtime_env_parts[0]:-stub}"
+profile_vllm_model_name="${_runtime_env_parts[1]:-qwen3-vl-4b}"
+profile_vllm_max_model_len="${_runtime_env_parts[2]:-}"
+profile_vllm_gpu_memory_utilization="${_runtime_env_parts[3]:-}"
+profile_vllm_max_num_seqs="${_runtime_env_parts[4]:-}"
 
 if [[ "$annotation_backend" == "openai_compatible" && "$with_vllm" == "yes" && -n "$vllm_model_source" ]]; then
   start_local_vllm=1
@@ -703,23 +733,36 @@ fi
 if [[ "$start_local_vllm" -eq 1 ]]; then
   command -v nvidia-smi >/dev/null 2>&1 || die "Local vLLM requested, but nvidia-smi was not found. Supply an external VLLM_BASE_URL or use --skip-vllm."
   if [[ -z "$vllm_served_model_name" ]]; then
-    vllm_served_model_name="$("$venv_python" - "$repo_root" <<'PY'
-from __future__ import annotations
-
-import sys
-from pathlib import Path
-
-root = Path(sys.argv[1]).resolve()
-sys.path.insert(0, str(root))
-
-from backend.services.system_profiles import parse_env_file
-
-payload = parse_env_file(root / ".env.active")
-print(payload.get("VLLM_MODEL_NAME", "qwen3-vl-4b"))
-PY
-)"
+    vllm_served_model_name="$profile_vllm_model_name"
   fi
-  start_service vllm "$venv_python" -m vllm.entrypoints.openai.api_server --model "$vllm_model_source" --served-model-name "$vllm_served_model_name" --host "$vllm_host" --port "$vllm_port"
+  if [[ -z "$vllm_max_model_len" ]]; then
+    vllm_max_model_len="$profile_vllm_max_model_len"
+  fi
+  if [[ -z "$vllm_gpu_memory_utilization" ]]; then
+    vllm_gpu_memory_utilization="$profile_vllm_gpu_memory_utilization"
+  fi
+  if [[ -z "$vllm_max_num_seqs" ]]; then
+    vllm_max_num_seqs="$profile_vllm_max_num_seqs"
+  fi
+  vllm_command=(
+    "$venv_python"
+    -m
+    vllm.entrypoints.openai.api_server
+    --model "$vllm_model_source"
+    --served-model-name "$vllm_served_model_name"
+    --host "$vllm_host"
+    --port "$vllm_port"
+  )
+  if [[ -n "$vllm_max_model_len" ]]; then
+    vllm_command+=(--max-model-len "$vllm_max_model_len")
+  fi
+  if [[ -n "$vllm_gpu_memory_utilization" ]]; then
+    vllm_command+=(--gpu-memory-utilization "$vllm_gpu_memory_utilization")
+  fi
+  if [[ -n "$vllm_max_num_seqs" ]]; then
+    vllm_command+=(--max-num-seqs "$vllm_max_num_seqs")
+  fi
+  start_service vllm "${vllm_command[@]}"
   vllm_pid="$started_pid"
   wait_for_http "http://${vllm_host}:${vllm_port}/health" 180 >/dev/null 2>&1 || wait_for_http "http://${vllm_host}:${vllm_port}/v1/models" 180 >/dev/null 2>&1 || {
     tail_last_lines "$managed_log_dir/vllm.log"
