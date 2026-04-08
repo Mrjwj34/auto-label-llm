@@ -17,12 +17,13 @@ bash scripts/start-linux.sh --profile dev_low_resource --run-tests
 
 - 自动检查并补齐 Linux 基础依赖（Ubuntu / Debian 主路径）
 - 创建或复用 `.venv`
-- 安装 `requirements.txt`
-- 安装前端依赖
+- 按依赖指纹缓存安装 `requirements.txt` 与可选 Python 包，避免每次启动都重复 `pip install`
+- 按 `package-lock.json` / `package.json` 指纹缓存前端依赖，避免每次都重复 `npm ci`
 - 根据 profile 生成 `.env.active` 与 `frontend/.env.local`
 - 可选运行 `compileall + pytest + frontend build`
 - 拉起 Redis、worker、FastAPI、前端开发服务器
 - 在 `test_real_stack` / `demo_prod` 下按需补齐 `torch`、`sam3`、`vllm`、`LLaMA-Factory`
+- 启动本地 `vllm` 时默认使用更保守的显存参数，并在启动阶段持续输出最近日志，避免“卡住但没日志”
 
 常用用法：
 
@@ -37,6 +38,13 @@ bash scripts/start-linux.sh --profile test_real_stack --setup-only --with-sam3 -
 VLLM_MODEL_SOURCE=Qwen/Qwen2.5-VL-7B-Instruct \
 bash scripts/start-linux.sh --profile test_real_stack --with-vllm --with-sam3 --with-llamafactory
 
+# 如果显存比较紧，可以继续压低 vLLM 参数，或透传额外参数
+VLLM_MODEL_SOURCE=Qwen/Qwen2.5-VL-7B-Instruct \
+bash scripts/start-linux.sh --profile test_real_stack --with-vllm \
+  --vllm-max-model-len 2048 \
+  --vllm-gpu-memory-utilization 0.72 \
+  --vllm-arg --limit-mm-per-prompt --vllm-arg image=2
+
 # 如果真实 vLLM 已经在别处运行，只让脚本接管其余服务
 VLLM_BASE_URL=http://127.0.0.1:8001 \
 bash scripts/start-linux.sh --profile test_real_stack --skip-vllm
@@ -48,6 +56,8 @@ bash scripts/start-linux.sh --profile test_real_stack --skip-vllm
 - `test_real_stack`：统一联调档，面向真实 vLLM / SAM / 训练环境
 - `demo_prod`：答辩演示档，使用更激进的模型与超时配置
 - 脚本默认把日志写到 `logs/start-linux-时间戳/`
+- 依赖安装缓存默认写到 `.cache/start-linux/install-state/`
+- 需要强制重装时可使用 `--refresh-python-deps`、`--refresh-frontend-deps`、`--refresh-optional-deps` 或 `--refresh-all-deps`
 - 这是单机开发 / 单机演示脚本，不包含 Nginx、反向代理、生产部署编排
 - 后端仍优先读取仓库根目录 `.env.active`，前端仍读取 `frontend/.env.local`，但现在都由 `scripts/start-linux.sh` 自动生成，不需要再单独切 profile
 

@@ -23,17 +23,84 @@ skip_frontend_install=0
 skip_system_deps=0
 embedded_worker=0
 start_frontend=1
+refresh_python_deps=0
+refresh_frontend_deps=0
+refresh_optional_deps=0
+
 vllm_model_source="${VLLM_MODEL_SOURCE:-}"
+vllm_model_source_source=""
+[[ -n "$vllm_model_source" ]] && vllm_model_source_source="env"
+
 vllm_base_url="${VLLM_BASE_URL:-}"
-vllm_served_model_name=""
+vllm_base_url_source=""
+[[ -n "$vllm_base_url" ]] && vllm_base_url_source="env"
+
+vllm_served_model_name="${VLLM_SERVED_MODEL_NAME:-}"
+vllm_served_model_name_source=""
+[[ -n "$vllm_served_model_name" ]] && vllm_served_model_name_source="env"
+
 vllm_host="127.0.0.1"
 vllm_port="8001"
+
 vllm_max_model_len="${VLLM_MAX_MODEL_LEN:-}"
+vllm_max_model_len_source=""
+[[ -n "$vllm_max_model_len" ]] && vllm_max_model_len_source="env"
+
 vllm_gpu_memory_utilization="${VLLM_GPU_MEMORY_UTILIZATION:-}"
+vllm_gpu_memory_utilization_source=""
+[[ -n "$vllm_gpu_memory_utilization" ]] && vllm_gpu_memory_utilization_source="env"
+
 vllm_max_num_seqs="${VLLM_MAX_NUM_SEQS:-}"
+vllm_max_num_seqs_source=""
+[[ -n "$vllm_max_num_seqs" ]] && vllm_max_num_seqs_source="env"
+
+vllm_dtype="${VLLM_DTYPE:-}"
+vllm_dtype_source=""
+[[ -n "$vllm_dtype" ]] && vllm_dtype_source="env"
+
+vllm_tensor_parallel_size="${VLLM_TENSOR_PARALLEL_SIZE:-}"
+vllm_tensor_parallel_size_source=""
+[[ -n "$vllm_tensor_parallel_size" ]] && vllm_tensor_parallel_size_source="env"
+
+vllm_pipeline_parallel_size="${VLLM_PIPELINE_PARALLEL_SIZE:-}"
+vllm_pipeline_parallel_size_source=""
+[[ -n "$vllm_pipeline_parallel_size" ]] && vllm_pipeline_parallel_size_source="env"
+
+vllm_max_num_batched_tokens="${VLLM_MAX_NUM_BATCHED_TOKENS:-}"
+vllm_max_num_batched_tokens_source=""
+[[ -n "$vllm_max_num_batched_tokens" ]] && vllm_max_num_batched_tokens_source="env"
+
+vllm_swap_space="${VLLM_SWAP_SPACE:-}"
+vllm_swap_space_source=""
+[[ -n "$vllm_swap_space" ]] && vllm_swap_space_source="env"
+
+vllm_cpu_offload_gb="${VLLM_CPU_OFFLOAD_GB:-}"
+vllm_cpu_offload_gb_source=""
+[[ -n "$vllm_cpu_offload_gb" ]] && vllm_cpu_offload_gb_source="env"
+
+vllm_download_dir="${VLLM_DOWNLOAD_DIR:-}"
+vllm_download_dir_source=""
+[[ -n "$vllm_download_dir" ]] && vllm_download_dir_source="env"
+
+vllm_start_timeout="${VLLM_START_TIMEOUT:-300}"
+vllm_log_tail_lines="${VLLM_LOG_TAIL_LINES:-20}"
+vllm_safe_mode=1
+vllm_enforce_eager=0
+vllm_enforce_eager_explicit=0
+vllm_disable_custom_all_reduce=0
+vllm_disable_custom_all_reduce_explicit=0
+
 llamafactory_cli="${LLAMAFACTORY_CLI:-llamafactory-cli}"
+
+timestamp="$(date +%Y%m%d-%H%M%S)"
+session_log_dir=""
+setup_log_dir=""
 managed_log_dir=""
+state_dir=""
+install_state_dir=""
+
 declare -a managed_pids=()
+declare -a vllm_extra_args=()
 started_pid=""
 
 usage() {
@@ -43,10 +110,10 @@ Usage: bash scripts/start-linux.sh [options]
 One command for Linux-based setup + profile activation + local service orchestration.
 It can:
   1. auto-install missing system dependencies on Ubuntu/Debian,
-  2. create/update the Python virtualenv and frontend deps,
+  2. create/update the Python virtualenv and frontend deps with cache-aware install markers,
   3. write .env.active and frontend/.env.local from the selected profile,
   4. optionally run compileall + pytest + frontend build,
-  5. start Redis / worker / backend / frontend / local vLLM with health checks.
+  5. start Redis / worker / backend / frontend / local vLLM with health checks and live startup logs.
 
 Recommended smoke path:
   bash scripts/start-linux.sh --profile dev_low_resource --run-tests
@@ -56,51 +123,77 @@ Recommended real-stack path:
   bash scripts/start-linux.sh --profile test_real_stack --with-vllm --with-sam3 --with-llamafactory
 
 Options:
-  --profile <name>               Profile name. Default: dev_low_resource
-  --venv <path>                  Virtualenv directory. Default: .venv
-  --python <exe>                 Python executable used to create the venv
-  --api-host <host>              Backend bind host. Default: 127.0.0.1
-  --api-port <port>              Backend port. Default: 8000
-  --frontend-host <host>         Frontend bind host. Default: 127.0.0.1
-  --frontend-port <port>         Frontend port. Default: 5173
-  --redis-host <host>            Redis host when using local managed Redis. Default: 127.0.0.1
-  --redis-port <port>            Redis port when using local managed Redis. Default: 6379
-  --redis-url <url>              Full Redis URL. Default: redis://127.0.0.1:<port>/0
-  --with-vllm                    Install/start local vLLM if needed
-  --skip-vllm                    Do not install/start local vLLM
-  --with-sam3                    Install real SAM3 dependencies
-  --skip-sam3                    Skip real SAM3 dependencies
-  --with-llamafactory            Install LLaMA-Factory CLI
-  --skip-llamafactory            Skip LLaMA-Factory CLI installation
-  --vllm-model-source <value>    Hugging Face id or local path for local vLLM
-  --vllm-base-url <url>          OpenAI-compatible base URL. Default: VLLM_BASE_URL or http://127.0.0.1:8001
-  --vllm-served-model-name <v>   Served model name for local vLLM; defaults to profile VLLM_MODEL_NAME
-  --vllm-host <host>             Local vLLM bind host. Default: 127.0.0.1
-  --vllm-port <port>             Local vLLM bind port. Default: 8001
-  --vllm-max-model-len <n>       Optional vLLM max model length. Default: VLLM_MAX_MODEL_LEN or profile backend value
-  --vllm-gpu-memory-utilization  Optional vLLM GPU memory fraction. Default: VLLM_GPU_MEMORY_UTILIZATION or profile backend value
-  --vllm-max-num-seqs <n>        Optional vLLM max concurrent sequences. Default: VLLM_MAX_NUM_SEQS or profile backend value
-  --llamafactory-cli <command>   CLI used by backend FINETUNE_BACKEND=auto. Default: llamafactory-cli
-  --download-sam3-checkpoint     Download the configured SAM3 checkpoint family
-  --sam3-version <sam3|sam3.1>   Checkpoint family when downloading; auto by profile
-  --run-tests                    Run compileall + pytest + frontend build before startup
-  --setup-only                   Stop after environment setup and optional tests
-  --skip-frontend-install        Skip npm ci / npm install
-  --skip-system-deps             Do not try to apt-install missing Linux packages
-  --embedded-worker              Keep TASK_EMBEDDED_WORKER=true and do not start a standalone worker
-  --no-frontend                  Do not start the frontend dev server
-  -h, --help                     Show this help
+  --profile <name>                  Profile name. Default: dev_low_resource
+  --venv <path>                     Virtualenv directory. Default: .venv
+  --python <exe>                    Python executable used to create the venv
+  --api-host <host>                 Backend bind host. Default: 127.0.0.1
+  --api-port <port>                 Backend port. Default: 8000
+  --frontend-host <host>            Frontend bind host. Default: 127.0.0.1
+  --frontend-port <port>            Frontend port. Default: 5173
+  --redis-host <host>               Redis host when using local managed Redis. Default: 127.0.0.1
+  --redis-port <port>               Redis port when using local managed Redis. Default: 6379
+  --redis-url <url>                 Full Redis URL. Default: redis://127.0.0.1:<port>/0
+  --with-vllm                       Install/start local vLLM if needed
+  --skip-vllm                       Do not install/start local vLLM
+  --with-sam3                       Install real SAM3 dependencies
+  --skip-sam3                       Skip real SAM3 dependencies
+  --with-llamafactory               Install LLaMA-Factory CLI
+  --skip-llamafactory               Skip LLaMA-Factory CLI installation
+  --vllm-model-source <value>       Hugging Face id or local path for local vLLM
+  --vllm-base-url <url>             OpenAI-compatible base URL. Default: VLLM_BASE_URL or http://127.0.0.1:8001
+  --vllm-served-model-name <value>  Served model name for local vLLM; defaults to profile VLLM_MODEL_NAME
+  --vllm-host <host>                Local vLLM bind host. Default: 127.0.0.1
+  --vllm-port <port>                Local vLLM bind port. Default: 8001
+  --vllm-max-model-len <n>          Optional vLLM max model length override
+  --vllm-gpu-memory-utilization <f> Optional vLLM GPU memory fraction override
+  --vllm-max-num-seqs <n>           Optional vLLM max concurrent sequences override
+  --vllm-dtype <value>              Optional vLLM dtype, e.g. half / bfloat16 / auto
+  --vllm-tensor-parallel-size <n>   Optional vLLM tensor parallel size
+  --vllm-pipeline-parallel-size <n> Optional vLLM pipeline parallel size
+  --vllm-max-num-batched-tokens <n> Optional vLLM max batched tokens
+  --vllm-swap-space <gb>            Optional vLLM CPU swap-space in GiB
+  --vllm-cpu-offload-gb <gb>        Optional vLLM CPU offload size in GiB
+  --vllm-download-dir <path>        Optional vLLM model download cache dir
+  --vllm-start-timeout <sec>        vLLM readiness timeout. Default: 300
+  --vllm-log-tail-lines <n>         Startup log lines to stream each round. Default: 20
+  --vllm-enforce-eager              Add --enforce-eager when starting local vLLM
+  --vllm-disable-custom-all-reduce  Add --disable-custom-all-reduce when starting local vLLM
+  --vllm-no-safe-mode               Disable conservative vLLM auto-tuning / clamping
+  --vllm-arg <token>                Append one raw extra token to the vLLM command; repeat as needed
+  --llamafactory-cli <command>      CLI used by backend FINETUNE_BACKEND=auto. Default: llamafactory-cli
+  --download-sam3-checkpoint        Download the configured SAM3 checkpoint family
+  --sam3-version <sam3|sam3.1>      Checkpoint family when downloading; auto by profile
+  --run-tests                       Run compileall + pytest + frontend build before startup
+  --setup-only                      Stop after environment setup and optional tests
+  --skip-frontend-install           Skip npm ci / npm install
+  --skip-system-deps                Do not try to apt-install missing Linux packages
+  --embedded-worker                 Keep TASK_EMBEDDED_WORKER=true and do not start a standalone worker
+  --no-frontend                     Do not start the frontend dev server
+  --refresh-python-deps             Force reinstall requirements.txt inside the venv
+  --refresh-frontend-deps           Force reinstall frontend dependencies
+  --refresh-optional-deps           Force reinstall optional packages such as vLLM / SAM3 / LLaMA-Factory
+  --refresh-all-deps                Force reinstall every managed dependency bucket
+  -h, --help                        Show this help
 
 Environment overrides:
-  PYTHON_BIN             Preferred Python executable
-  TORCH_PIP_SPEC         Torch packages. Default: "torch torchvision"
-  TORCH_EXTRA_INDEX_URL  Torch wheel index. Default: https://download.pytorch.org/whl/cu126
-  SAM3_PIP_SPEC          SAM3 packages. Default: "git+https://github.com/facebookresearch/sam3.git huggingface_hub"
-  VLLM_PIP_SPEC          vLLM packages. Default: "vllm"
-  LLAMAFACTORY_PIP_SPEC  LLaMA-Factory package. Default: "llamafactory"
-  VLLM_MAX_MODEL_LEN             Optional vLLM max context length override
-  VLLM_GPU_MEMORY_UTILIZATION    Optional vLLM GPU memory fraction override
-  VLLM_MAX_NUM_SEQS              Optional vLLM max concurrent sequences override
+  PYTHON_BIN                 Preferred Python executable
+  TORCH_PIP_SPEC             Torch packages. Default: "torch torchvision"
+  TORCH_EXTRA_INDEX_URL      Torch wheel index. Default: https://download.pytorch.org/whl/cu126
+  SAM3_PIP_SPEC              SAM3 packages. Default: "git+https://github.com/facebookresearch/sam3.git huggingface_hub"
+  VLLM_PIP_SPEC              vLLM packages. Default: "vllm"
+  LLAMAFACTORY_PIP_SPEC      LLaMA-Factory package. Default: "llamafactory"
+  VLLM_MAX_MODEL_LEN         Optional vLLM max context length override
+  VLLM_GPU_MEMORY_UTILIZATION Optional vLLM GPU memory fraction override
+  VLLM_MAX_NUM_SEQS          Optional vLLM max concurrent sequences override
+  VLLM_DTYPE                 Optional vLLM dtype override
+  VLLM_TENSOR_PARALLEL_SIZE  Optional vLLM tensor parallel size
+  VLLM_PIPELINE_PARALLEL_SIZE Optional vLLM pipeline parallel size
+  VLLM_MAX_NUM_BATCHED_TOKENS Optional vLLM max batched tokens
+  VLLM_SWAP_SPACE            Optional vLLM swap-space in GiB
+  VLLM_CPU_OFFLOAD_GB        Optional vLLM CPU offload in GiB
+  VLLM_DOWNLOAD_DIR          Optional vLLM model download dir
+  VLLM_START_TIMEOUT         vLLM readiness timeout in seconds
+  VLLM_LOG_TAIL_LINES        Number of log lines to stream while vLLM starts
 EOF
 }
 
@@ -117,6 +210,17 @@ die() {
   exit 1
 }
 
+is_truthy() {
+  case "${1:-}" in
+    1|true|TRUE|True|yes|YES|Yes|on|ON|On)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 cleanup() {
   local index
   for (( index=${#managed_pids[@]}-1; index>=0; index-- )); do
@@ -127,6 +231,507 @@ cleanup() {
     fi
   done
 }
+
+tail_last_lines() {
+  local path="$1"
+  local lines="${2:-40}"
+  if [[ -f "$path" ]]; then
+    printf '\n----- %s (last %s lines) -----\n' "$path" "$lines" >&2
+    tail -n "$lines" "$path" >&2 || true
+  fi
+}
+
+count_log_lines() {
+  local path="$1"
+  if [[ -f "$path" ]]; then
+    wc -l <"$path" 2>/dev/null || echo 0
+  else
+    echo 0
+  fi
+}
+
+emit_new_log_lines() {
+  local path="$1"
+  local seen_lines="$2"
+  local max_lines="${3:-20}"
+  local total_lines
+
+  total_lines="$(count_log_lines "$path")"
+  if (( total_lines <= seen_lines )); then
+    printf '%s\n' "$seen_lines"
+    return 0
+  fi
+
+  local start_line=$((seen_lines + 1))
+  if (( total_lines - start_line + 1 > max_lines )); then
+    start_line=$((total_lines - max_lines + 1))
+  fi
+  sed -n "${start_line},${total_lines}p" "$path" >&2 || true
+  printf '%s\n' "$total_lines"
+}
+
+run_logged_step() {
+  local description="$1"
+  local log_path="$2"
+  shift 2
+
+  log "$description"
+  if "$@" >"$log_path" 2>&1; then
+    log "$description completed."
+    return 0
+  fi
+
+  tail_last_lines "$log_path" 80
+  die "$description failed. Full log: $log_path"
+}
+
+run_logged_step_in_dir() {
+  local description="$1"
+  local log_path="$2"
+  local workdir="$3"
+  shift 3
+
+  log "$description"
+  if (
+    cd "$workdir"
+    "$@"
+  ) >"$log_path" 2>&1; then
+    log "$description completed."
+    return 0
+  fi
+
+  tail_last_lines "$log_path" 80
+  die "$description failed. Full log: $log_path"
+}
+
+compute_fingerprint() {
+  local python_exe="$1"
+  shift
+  "$python_exe" - "$@" <<'PY'
+from __future__ import annotations
+
+import hashlib
+import sys
+
+h = hashlib.sha256()
+for item in sys.argv[1:]:
+    if item.startswith("file:"):
+        path = item[5:]
+        h.update(f"file:{path}\n".encode("utf-8"))
+        with open(path, "rb") as fh:
+            while True:
+                chunk = fh.read(1024 * 1024)
+                if not chunk:
+                    break
+                h.update(chunk)
+    else:
+        h.update(f"str:{item}\n".encode("utf-8"))
+print(h.hexdigest())
+PY
+}
+
+run_cached_step() {
+  local marker_name="$1"
+  local fingerprint="$2"
+  local force_run="$3"
+  local description="$4"
+  shift 4
+
+  local marker_path="$install_state_dir/${marker_name}.sha256"
+  local log_path="$setup_log_dir/${marker_name}.log"
+  local current=""
+  if [[ -f "$marker_path" ]]; then
+    current="$(<"$marker_path")"
+  fi
+
+  if [[ "$force_run" -eq 0 && "$current" == "$fingerprint" ]]; then
+    log "Reusing $description (cache hit)"
+    return 0
+  fi
+
+  run_logged_step "$description" "$log_path" "$@"
+  printf '%s\n' "$fingerprint" >"$marker_path"
+}
+
+http_is_ready() {
+  local url="$1"
+  "$venv_python" - "$url" <<'PY'
+from __future__ import annotations
+
+import sys
+import urllib.error
+import urllib.request
+
+url = sys.argv[1]
+try:
+    with urllib.request.urlopen(url, timeout=2.0) as response:
+        if 200 <= response.status < 500:
+            raise SystemExit(0)
+except Exception:
+    raise SystemExit(1)
+PY
+}
+
+wait_for_any_url() {
+  local timeout_seconds="$1"
+  shift
+  local deadline=$((SECONDS + timeout_seconds))
+  local url
+
+  while (( SECONDS < deadline )); do
+    for url in "$@"; do
+      if http_is_ready "$url" >/dev/null 2>&1; then
+        return 0
+      fi
+    done
+    sleep 1
+  done
+
+  return 1
+}
+
+wait_for_service_ready() {
+  local name="$1"
+  local pid="$2"
+  local timeout_seconds="$3"
+  local log_path="$4"
+  shift 4
+  local probe_urls=("$@")
+
+  local deadline=$((SECONDS + timeout_seconds))
+  local last_notice=-1000
+  local seen_lines=0
+  local current_lines=0
+  local url=""
+
+  while (( SECONDS < deadline )); do
+    if ! kill -0 "$pid" >/dev/null 2>&1; then
+      warn "$name exited before becoming healthy."
+      tail_last_lines "$log_path" 80
+      return 1
+    fi
+
+    for url in "${probe_urls[@]}"; do
+      if http_is_ready "$url" >/dev/null 2>&1; then
+        return 0
+      fi
+    done
+
+    current_lines="$(count_log_lines "$log_path")"
+    if (( current_lines > seen_lines )); then
+      log "$name is still starting; recent log output:"
+      seen_lines="$(emit_new_log_lines "$log_path" "$seen_lines" "$vllm_log_tail_lines")"
+      last_notice="$SECONDS"
+    elif (( SECONDS - last_notice >= 10 )); then
+      log "$name is still starting... (waiting up to ${timeout_seconds}s, log: $log_path)"
+      last_notice="$SECONDS"
+    fi
+
+    sleep 2
+  done
+
+  warn "$name did not become healthy within ${timeout_seconds}s."
+  tail_last_lines "$log_path" 80
+  return 1
+}
+
+build_vllm_probe_urls() {
+  local base_url="$1"
+  "$venv_python" - "$base_url" <<'PY'
+from __future__ import annotations
+
+import sys
+from urllib.parse import urlparse, urlunparse
+
+raw = sys.argv[1].rstrip("/")
+parsed = urlparse(raw)
+scheme = parsed.scheme or "http"
+if parsed.netloc:
+    netloc = parsed.netloc
+    path = parsed.path.rstrip("/")
+else:
+    netloc = parsed.path
+    path = ""
+
+origin = urlunparse((scheme, netloc, "", "", "", ""))
+if path.endswith("/v1"):
+    print(f"{origin}/health")
+    print(f"{origin}{path}/models")
+elif path:
+    print(f"{origin}{path}/health")
+    print(f"{origin}{path}/v1/models")
+else:
+    print(f"{origin}/health")
+    print(f"{origin}/v1/models")
+PY
+}
+
+ping_redis_url() {
+  local url="$1"
+  "$venv_python" - "$url" <<'PY'
+from __future__ import annotations
+
+import sys
+
+import redis
+
+client = redis.Redis.from_url(
+    sys.argv[1],
+    decode_responses=True,
+    socket_connect_timeout=2.0,
+    socket_timeout=2.0,
+)
+client.ping()
+PY
+}
+
+start_service() {
+  local name="$1"
+  shift
+  local log_path="$managed_log_dir/${name}.log"
+  log "Starting $name (log: $log_path)"
+  (
+    cd "$repo_root"
+    if command -v stdbuf >/dev/null 2>&1; then
+      stdbuf -oL -eL "$@"
+    else
+      "$@"
+    fi
+  ) >"$log_path" 2>&1 &
+  started_pid="$!"
+  managed_pids+=("$started_pid")
+}
+
+node_major_version() {
+  if ! command -v node >/dev/null 2>&1; then
+    echo 0
+    return
+  fi
+  local raw
+  raw="$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0)"
+  echo "${raw:-0}"
+}
+
+ensure_apt_packages() {
+  local packages=("$@")
+  [[ ${#packages[@]} -gt 0 ]] || return 0
+  if [[ "$skip_system_deps" -eq 1 ]]; then
+    die "Missing required Linux packages: ${packages[*]}. Re-run without --skip-system-deps."
+  fi
+  command -v apt-get >/dev/null 2>&1 || die "Automatic package install currently supports apt-based Linux only."
+  [[ ${#sudo_cmd[@]} -gt 0 || "$(id -u)" -eq 0 ]] || die "Need root/sudo to install missing Linux packages: ${packages[*]}"
+  log "Installing apt packages: ${packages[*]}"
+  "${sudo_cmd[@]}" apt-get update -y
+  DEBIAN_FRONTEND=noninteractive "${sudo_cmd[@]}" apt-get install -y "${packages[@]}"
+}
+
+ensure_node_22() {
+  local current_major
+  current_major="$(node_major_version)"
+  if (( current_major >= 20 )); then
+    return 0
+  fi
+  if [[ "$skip_system_deps" -eq 1 ]]; then
+    die "Node.js >= 20 is required (current major: ${current_major}). Re-run without --skip-system-deps."
+  fi
+  command -v apt-get >/dev/null 2>&1 || die "Automatic Node.js installation currently supports apt-based Linux only."
+  [[ ${#sudo_cmd[@]} -gt 0 || "$(id -u)" -eq 0 ]] || die "Need root/sudo to install Node.js 22."
+  log "Installing Node.js 22 from NodeSource."
+  "${sudo_cmd[@]}" apt-get update -y
+  ensure_apt_packages ca-certificates curl gnupg
+  if [[ ${#sudo_cmd[@]} -gt 0 ]]; then
+    curl -fsSL https://deb.nodesource.com/setup_22.x | "${sudo_cmd[@]}" -E bash -
+  else
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  fi
+  DEBIAN_FRONTEND=noninteractive "${sudo_cmd[@]}" apt-get install -y nodejs
+}
+
+choose_python() {
+  local candidate
+  if [[ -n "${python_bin}" ]]; then
+    command -v "$python_bin" >/dev/null 2>&1 || die "Python executable not found: $python_bin"
+    echo "$python_bin"
+    return
+  fi
+  if [[ -n "${PYTHON_BIN:-}" ]]; then
+    command -v "${PYTHON_BIN}" >/dev/null 2>&1 || die "Python executable not found: ${PYTHON_BIN}"
+    echo "${PYTHON_BIN}"
+    return
+  fi
+  for candidate in python3.11 python3.10 python3.12 python3; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      echo "$candidate"
+      return
+    fi
+  done
+  die "No suitable Python executable found. Install python3 and python3-venv first."
+}
+
+create_virtualenv() {
+  if "$system_python" -m venv "$venv_dir"; then
+    return 0
+  fi
+  if ! "$system_python" -m pip --version >/dev/null 2>&1; then
+    die "Failed to create virtualenv via stdlib venv, and system pip is unavailable for a virtualenv fallback."
+  fi
+  log "Falling back to virtualenv because stdlib venv did not succeed."
+  "$system_python" -m pip install --user virtualenv
+  "$system_python" -m virtualenv "$venv_dir"
+}
+
+ensure_base_tools() {
+  local packages=()
+  command -v git >/dev/null 2>&1 || packages+=(git)
+  command -v curl >/dev/null 2>&1 || packages+=(curl)
+  command -v redis-server >/dev/null 2>&1 || packages+=(redis-server)
+  command -v redis-cli >/dev/null 2>&1 || packages+=(redis-tools)
+  command -v "$system_python" >/dev/null 2>&1 || packages+=(python3 python3-venv python3-pip)
+  if [[ "$with_vllm" == "yes" || "$with_llamafactory" == "yes" ]]; then
+    command -v gcc >/dev/null 2>&1 || packages+=(build-essential)
+  fi
+  ensure_apt_packages "${packages[@]}"
+  if [[ "$skip_frontend_install" -ne 1 || ( "$setup_only" -ne 1 && "$start_frontend" -eq 1 ) ]]; then
+    ensure_node_22
+  fi
+}
+
+detect_visible_gpu_memory_mib() {
+  if ! command -v nvidia-smi >/dev/null 2>&1; then
+    echo 0
+    return
+  fi
+  nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -n 1 | tr -d ' ' || echo 0
+}
+
+normalize_local_model_source() {
+  local raw="$1"
+  if [[ -z "$raw" || "$raw" == /* ]]; then
+    printf '%s\n' "$raw"
+    return
+  fi
+
+  if [[ -e "$raw" ]]; then
+    (cd "$(dirname "$raw")" && printf '%s/%s\n' "$(pwd)" "$(basename "$raw")")
+    return
+  fi
+
+  if [[ -e "$repo_root/$raw" ]]; then
+    printf '%s\n' "$repo_root/$raw"
+    return
+  fi
+
+  printf '%s\n' "$raw"
+}
+
+apply_vllm_safe_defaults() {
+  local gpu_mib="$1"
+  local safe_max_model_len=""
+  local safe_gpu_util=""
+  local safe_max_num_seqs=""
+  local safe_max_num_batched_tokens=""
+  local safe_swap_space=""
+
+  if [[ "$vllm_safe_mode" -ne 1 ]]; then
+    return 0
+  fi
+
+  if [[ "$gpu_mib" =~ ^[0-9]+$ ]] && (( gpu_mib > 0 )); then
+    if (( gpu_mib <= 12288 )); then
+      safe_max_model_len="2048"
+      safe_gpu_util="0.72"
+      safe_max_num_seqs="1"
+      safe_max_num_batched_tokens="1024"
+      safe_swap_space="8"
+    elif (( gpu_mib <= 24576 )); then
+      safe_max_model_len="4096"
+      safe_gpu_util="0.82"
+      safe_max_num_seqs="1"
+      safe_max_num_batched_tokens="2048"
+      safe_swap_space="8"
+    else
+      safe_max_model_len="8192"
+      safe_gpu_util="0.90"
+      safe_max_num_seqs="2"
+      safe_max_num_batched_tokens="4096"
+      safe_swap_space="4"
+    fi
+  else
+    safe_max_model_len="4096"
+    safe_gpu_util="0.82"
+    safe_max_num_seqs="1"
+    safe_max_num_batched_tokens="2048"
+    safe_swap_space="8"
+  fi
+
+  if [[ -z "$vllm_max_model_len" ]]; then
+    vllm_max_model_len="$safe_max_model_len"
+    vllm_max_model_len_source="auto"
+  elif [[ "$vllm_max_model_len_source" == "profile" && "$vllm_max_model_len" =~ ^[0-9]+$ && "$safe_max_model_len" =~ ^[0-9]+$ && "$vllm_max_model_len" -gt "$safe_max_model_len" ]]; then
+    warn "Profile requested VLLM_MAX_MODEL_LEN=$vllm_max_model_len, but safe mode clamps it to $safe_max_model_len for this GPU."
+    vllm_max_model_len="$safe_max_model_len"
+    vllm_max_model_len_source="auto-clamped"
+  fi
+
+  if [[ -z "$vllm_gpu_memory_utilization" ]]; then
+    vllm_gpu_memory_utilization="$safe_gpu_util"
+    vllm_gpu_memory_utilization_source="auto"
+  elif [[ "$vllm_gpu_memory_utilization_source" == "profile" ]]; then
+    local current_util
+    current_util="$(printf '%s\n%s\n' "$vllm_gpu_memory_utilization" "$safe_gpu_util" | sort -g | tail -n 1)"
+    if [[ "$current_util" == "$vllm_gpu_memory_utilization" && "$vllm_gpu_memory_utilization" != "$safe_gpu_util" ]]; then
+      warn "Profile requested VLLM_GPU_MEMORY_UTILIZATION=$vllm_gpu_memory_utilization, but safe mode clamps it to $safe_gpu_util."
+      vllm_gpu_memory_utilization="$safe_gpu_util"
+      vllm_gpu_memory_utilization_source="auto-clamped"
+    fi
+  fi
+
+  if [[ -z "$vllm_max_num_seqs" ]]; then
+    vllm_max_num_seqs="$safe_max_num_seqs"
+    vllm_max_num_seqs_source="auto"
+  elif [[ "$vllm_max_num_seqs_source" == "profile" && "$vllm_max_num_seqs" =~ ^[0-9]+$ && "$safe_max_num_seqs" =~ ^[0-9]+$ && "$vllm_max_num_seqs" -gt "$safe_max_num_seqs" ]]; then
+    warn "Profile requested VLLM_MAX_NUM_SEQS=$vllm_max_num_seqs, but safe mode clamps it to $safe_max_num_seqs."
+    vllm_max_num_seqs="$safe_max_num_seqs"
+    vllm_max_num_seqs_source="auto-clamped"
+  fi
+
+  if [[ -z "$vllm_dtype" ]]; then
+    vllm_dtype="half"
+    vllm_dtype_source="auto"
+  fi
+
+  if [[ -z "$vllm_max_num_batched_tokens" ]]; then
+    vllm_max_num_batched_tokens="$safe_max_num_batched_tokens"
+    vllm_max_num_batched_tokens_source="auto"
+  fi
+
+  if [[ -z "$vllm_swap_space" ]]; then
+    vllm_swap_space="$safe_swap_space"
+    vllm_swap_space_source="auto"
+  fi
+
+  if [[ "$vllm_enforce_eager_explicit" -eq 0 ]]; then
+    vllm_enforce_eager=1
+  fi
+}
+
+if is_truthy "${VLLM_ENFORCE_EAGER:-}"; then
+  vllm_enforce_eager=1
+  vllm_enforce_eager_explicit=1
+fi
+
+if is_truthy "${VLLM_DISABLE_CUSTOM_ALL_REDUCE:-}"; then
+  vllm_disable_custom_all_reduce=1
+  vllm_disable_custom_all_reduce_explicit=1
+fi
+
+if [[ -n "${VLLM_SAFE_MODE:-}" ]]; then
+  if is_truthy "${VLLM_SAFE_MODE}"; then
+    vllm_safe_mode=1
+  else
+    vllm_safe_mode=0
+  fi
+fi
 
 trap cleanup EXIT INT TERM
 
@@ -198,14 +803,17 @@ while [[ $# -gt 0 ]]; do
       ;;
     --vllm-model-source)
       vllm_model_source="$2"
+      vllm_model_source_source="cli"
       shift 2
       ;;
     --vllm-base-url)
       vllm_base_url="$2"
+      vllm_base_url_source="cli"
       shift 2
       ;;
     --vllm-served-model-name)
       vllm_served_model_name="$2"
+      vllm_served_model_name_source="cli"
       shift 2
       ;;
     --vllm-host)
@@ -218,14 +826,78 @@ while [[ $# -gt 0 ]]; do
       ;;
     --vllm-max-model-len)
       vllm_max_model_len="$2"
+      vllm_max_model_len_source="cli"
       shift 2
       ;;
     --vllm-gpu-memory-utilization)
       vllm_gpu_memory_utilization="$2"
+      vllm_gpu_memory_utilization_source="cli"
       shift 2
       ;;
     --vllm-max-num-seqs)
       vllm_max_num_seqs="$2"
+      vllm_max_num_seqs_source="cli"
+      shift 2
+      ;;
+    --vllm-dtype)
+      vllm_dtype="$2"
+      vllm_dtype_source="cli"
+      shift 2
+      ;;
+    --vllm-tensor-parallel-size)
+      vllm_tensor_parallel_size="$2"
+      vllm_tensor_parallel_size_source="cli"
+      shift 2
+      ;;
+    --vllm-pipeline-parallel-size)
+      vllm_pipeline_parallel_size="$2"
+      vllm_pipeline_parallel_size_source="cli"
+      shift 2
+      ;;
+    --vllm-max-num-batched-tokens)
+      vllm_max_num_batched_tokens="$2"
+      vllm_max_num_batched_tokens_source="cli"
+      shift 2
+      ;;
+    --vllm-swap-space)
+      vllm_swap_space="$2"
+      vllm_swap_space_source="cli"
+      shift 2
+      ;;
+    --vllm-cpu-offload-gb)
+      vllm_cpu_offload_gb="$2"
+      vllm_cpu_offload_gb_source="cli"
+      shift 2
+      ;;
+    --vllm-download-dir)
+      vllm_download_dir="$2"
+      vllm_download_dir_source="cli"
+      shift 2
+      ;;
+    --vllm-start-timeout)
+      vllm_start_timeout="$2"
+      shift 2
+      ;;
+    --vllm-log-tail-lines)
+      vllm_log_tail_lines="$2"
+      shift 2
+      ;;
+    --vllm-enforce-eager)
+      vllm_enforce_eager=1
+      vllm_enforce_eager_explicit=1
+      shift
+      ;;
+    --vllm-disable-custom-all-reduce)
+      vllm_disable_custom_all_reduce=1
+      vllm_disable_custom_all_reduce_explicit=1
+      shift
+      ;;
+    --vllm-no-safe-mode)
+      vllm_safe_mode=0
+      shift
+      ;;
+    --vllm-arg)
+      vllm_extra_args+=("$2")
       shift 2
       ;;
     --llamafactory-cli)
@@ -262,6 +934,24 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-frontend)
       start_frontend=0
+      shift
+      ;;
+    --refresh-python-deps)
+      refresh_python_deps=1
+      shift
+      ;;
+    --refresh-frontend-deps)
+      refresh_frontend_deps=1
+      shift
+      ;;
+    --refresh-optional-deps)
+      refresh_optional_deps=1
+      shift
+      ;;
+    --refresh-all-deps)
+      refresh_python_deps=1
+      refresh_frontend_deps=1
+      refresh_optional_deps=1
       shift
       ;;
     -h|--help)
@@ -318,6 +1008,7 @@ fi
 
 if [[ -z "$vllm_base_url" ]]; then
   vllm_base_url="http://${vllm_host}:${vllm_port}"
+  vllm_base_url_source="default"
 fi
 
 sudo_cmd=()
@@ -327,73 +1018,17 @@ if [[ "$(id -u)" -ne 0 ]]; then
   fi
 fi
 
-node_major_version() {
-  if ! command -v node >/dev/null 2>&1; then
-    echo 0
-    return
-  fi
-  local raw
-  raw="$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0)"
-  echo "${raw:-0}"
-}
-
-ensure_apt_packages() {
-  local packages=("$@")
-  [[ ${#packages[@]} -gt 0 ]] || return 0
-  if [[ "$skip_system_deps" -eq 1 ]]; then
-    die "Missing required Linux packages: ${packages[*]}. Re-run without --skip-system-deps."
-  fi
-  command -v apt-get >/dev/null 2>&1 || die "Automatic package install currently supports apt-based Linux only."
-  [[ ${#sudo_cmd[@]} -gt 0 || "$(id -u)" -eq 0 ]] || die "Need root/sudo to install missing Linux packages: ${packages[*]}"
-  log "Installing apt packages: ${packages[*]}"
-  "${sudo_cmd[@]}" apt-get update -y
-  DEBIAN_FRONTEND=noninteractive "${sudo_cmd[@]}" apt-get install -y "${packages[@]}"
-}
-
-ensure_node_22() {
-  local current_major
-  current_major="$(node_major_version)"
-  if (( current_major >= 20 )); then
-    return 0
-  fi
-  if [[ "$skip_system_deps" -eq 1 ]]; then
-    die "Node.js >= 20 is required (current major: ${current_major}). Re-run without --skip-system-deps."
-  fi
-  command -v apt-get >/dev/null 2>&1 || die "Automatic Node.js installation currently supports apt-based Linux only."
-  [[ ${#sudo_cmd[@]} -gt 0 || "$(id -u)" -eq 0 ]] || die "Need root/sudo to install Node.js 22."
-  log "Installing Node.js 22 from NodeSource."
-  "${sudo_cmd[@]}" apt-get update -y
-  ensure_apt_packages ca-certificates curl gnupg
-  if [[ ${#sudo_cmd[@]} -gt 0 ]]; then
-    curl -fsSL https://deb.nodesource.com/setup_22.x | "${sudo_cmd[@]}" -E bash -
-  else
-    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-  fi
-  DEBIAN_FRONTEND=noninteractive "${sudo_cmd[@]}" apt-get install -y nodejs
-}
-
-choose_python() {
-  local candidate
-  if [[ -n "${python_bin}" ]]; then
-    command -v "$python_bin" >/dev/null 2>&1 || die "Python executable not found: $python_bin"
-    echo "$python_bin"
-    return
-  fi
-  if [[ -n "${PYTHON_BIN:-}" ]]; then
-    command -v "${PYTHON_BIN}" >/dev/null 2>&1 || die "Python executable not found: ${PYTHON_BIN}"
-    echo "${PYTHON_BIN}"
-    return
-  fi
-  for candidate in python3.11 python3.10 python3.12 python3; do
-    if command -v "$candidate" >/dev/null 2>&1; then
-      echo "$candidate"
-      return
-    fi
-  done
-  die "No suitable Python executable found. Install python3 and python3-venv first."
-}
-
 system_python="$(choose_python)"
+
+ensure_base_tools
+
+mkdir -p "$repo_root/data" "$repo_root/logs" "$repo_root/models/sam3"
+session_log_dir="$repo_root/logs/start-linux-$timestamp"
+setup_log_dir="$session_log_dir/setup"
+managed_log_dir="$session_log_dir/runtime"
+state_dir="$repo_root/.cache/start-linux"
+install_state_dir="$state_dir/install-state"
+mkdir -p "$setup_log_dir" "$managed_log_dir" "$install_state_dir"
 
 readarray -t _vllm_parts < <("$system_python" - "$vllm_base_url" <<'PY'
 from __future__ import annotations
@@ -411,41 +1046,11 @@ PY
 vllm_host="${_vllm_parts[0]:-$vllm_host}"
 vllm_port="${_vllm_parts[1]:-$vllm_port}"
 
-create_virtualenv() {
-  if "$system_python" -m venv "$venv_dir"; then
-    return 0
-  fi
-  if ! "$system_python" -m pip --version >/dev/null 2>&1; then
-    die "Failed to create virtualenv via stdlib venv, and system pip is unavailable for a virtualenv fallback."
-  fi
-  log "Falling back to virtualenv because stdlib venv did not succeed."
-  "$system_python" -m pip install --user virtualenv
-  "$system_python" -m virtualenv "$venv_dir"
-}
-
-ensure_base_tools() {
-  local packages=()
-  command -v git >/dev/null 2>&1 || packages+=(git)
-  command -v curl >/dev/null 2>&1 || packages+=(curl)
-  command -v redis-server >/dev/null 2>&1 || packages+=(redis-server)
-  command -v redis-cli >/dev/null 2>&1 || packages+=(redis-tools)
-  command -v "$system_python" >/dev/null 2>&1 || packages+=(python3 python3-venv python3-pip)
-  if [[ "$with_vllm" == "yes" || "$with_llamafactory" == "yes" ]]; then
-    command -v gcc >/dev/null 2>&1 || packages+=(build-essential)
-  fi
-  ensure_apt_packages "${packages[@]}"
-  if [[ "$skip_frontend_install" -ne 1 || ( "$setup_only" -ne 1 && "$start_frontend" -eq 1 ) ]]; then
-    ensure_node_22
-  fi
-}
-
-ensure_base_tools
-
-mkdir -p "$repo_root/data" "$repo_root/logs" "$repo_root/models/sam3"
-
+venv_created=0
 if [[ ! -x "$venv_dir/bin/python" ]]; then
   log "Creating virtualenv at $venv_dir"
   create_virtualenv
+  venv_created=1
 fi
 
 venv_python="$venv_dir/bin/python"
@@ -458,57 +1063,153 @@ if ! "$venv_python" -m pip --version >/dev/null 2>&1; then
     log "Rebuilding the virtualenv via virtualenv because ensurepip is unavailable."
     "$system_python" -m pip install --user virtualenv
     "$system_python" -m virtualenv --clear "$venv_dir"
+    venv_created=1
   else
     die "pip is missing in the virtualenv, and neither ensurepip nor system pip is available. Install python3-venv / python3-pip and retry."
   fi
 fi
 
-pip_cmd=("$venv_python" -m pip)
+python_runtime_id="$("$venv_python" -c 'import platform, sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}|{platform.platform()}")')"
 
-log "Installing Python requirements"
-"${pip_cmd[@]}" install --upgrade pip setuptools wheel
-"${pip_cmd[@]}" install -r "$repo_root/requirements.txt"
+if [[ "$venv_created" -eq 1 || "$refresh_python_deps" -eq 1 ]]; then
+  run_logged_step \
+    "Bootstrapping pip/setuptools/wheel" \
+    "$setup_log_dir/pip-bootstrap.log" \
+    "$venv_python" -m pip install --disable-pip-version-check --progress-bar off --upgrade pip setuptools wheel
+fi
 
-if [[ "$with_sam3" == "yes" || "$with_vllm" == "yes" || "$with_llamafactory" == "yes" ]]; then
+base_requirements_fingerprint="$(
+  compute_fingerprint \
+    "$venv_python" \
+    "bucket:python-requirements" \
+    "python:$python_runtime_id" \
+    "file:$repo_root/requirements.txt"
+)"
+run_cached_step \
+  "python-requirements" \
+  "$base_requirements_fingerprint" \
+  "$(( venv_created || refresh_python_deps ))" \
+  "Installing Python requirements from requirements.txt" \
+  "$venv_python" -m pip install --disable-pip-version-check --progress-bar off -r "$repo_root/requirements.txt"
+
+need_shared_torch=0
+if [[ "$with_sam3" == "yes" || "$with_llamafactory" == "yes" ]]; then
+  need_shared_torch=1
+elif [[ "$with_vllm" == "yes" && -n "${TORCH_PIP_SPEC:-}" ]]; then
+  need_shared_torch=1
+fi
+
+if [[ "$need_shared_torch" -eq 1 ]]; then
   read -r -a torch_packages <<<"${TORCH_PIP_SPEC:-torch torchvision}"
-  log "Installing Torch packages: ${torch_packages[*]}"
-  "${pip_cmd[@]}" install --extra-index-url "${TORCH_EXTRA_INDEX_URL:-https://download.pytorch.org/whl/cu126}" "${torch_packages[@]}"
+  torch_fingerprint="$(
+    compute_fingerprint \
+      "$venv_python" \
+      "bucket:torch" \
+      "python:$python_runtime_id" \
+      "extra-index:${TORCH_EXTRA_INDEX_URL:-https://download.pytorch.org/whl/cu126}" \
+      "spec:${torch_packages[*]}"
+  )"
+  run_cached_step \
+    "torch" \
+    "$torch_fingerprint" \
+    "$(( venv_created || refresh_optional_deps ))" \
+    "Installing Torch packages: ${torch_packages[*]}" \
+    "$venv_python" -m pip install --disable-pip-version-check --progress-bar off --extra-index-url "${TORCH_EXTRA_INDEX_URL:-https://download.pytorch.org/whl/cu126}" "${torch_packages[@]}"
+elif [[ "$with_vllm" == "yes" ]]; then
+  log "Skipping standalone Torch install for vLLM-only path; letting the vLLM package manage its own runtime dependency set."
 fi
 
 if [[ "$with_sam3" == "yes" ]]; then
   read -r -a sam3_packages <<<"${SAM3_PIP_SPEC:-git+https://github.com/facebookresearch/sam3.git huggingface_hub}"
-  log "Installing SAM3 packages: ${sam3_packages[*]}"
-  "${pip_cmd[@]}" install "${sam3_packages[@]}"
+  sam3_fingerprint="$(
+    compute_fingerprint \
+      "$venv_python" \
+      "bucket:sam3" \
+      "python:$python_runtime_id" \
+      "spec:${sam3_packages[*]}"
+  )"
+  run_cached_step \
+    "sam3" \
+    "$sam3_fingerprint" \
+    "$(( venv_created || refresh_optional_deps ))" \
+    "Installing SAM3 packages: ${sam3_packages[*]}" \
+    "$venv_python" -m pip install --disable-pip-version-check --progress-bar off "${sam3_packages[@]}"
 fi
 
 if [[ "$with_vllm" == "yes" ]]; then
   read -r -a vllm_packages <<<"${VLLM_PIP_SPEC:-vllm}"
-  log "Installing vLLM packages: ${vllm_packages[*]}"
-  "${pip_cmd[@]}" install "${vllm_packages[@]}"
+  vllm_fingerprint="$(
+    compute_fingerprint \
+      "$venv_python" \
+      "bucket:vllm" \
+      "python:$python_runtime_id" \
+      "spec:${vllm_packages[*]}"
+  )"
+  run_cached_step \
+    "vllm" \
+    "$vllm_fingerprint" \
+    "$(( venv_created || refresh_optional_deps ))" \
+    "Installing vLLM packages: ${vllm_packages[*]}" \
+    "$venv_python" -m pip install --disable-pip-version-check --progress-bar off "${vllm_packages[@]}"
 fi
 
 if [[ "$with_llamafactory" == "yes" ]]; then
   read -r -a llamafactory_packages <<<"${LLAMAFACTORY_PIP_SPEC:-llamafactory}"
-  log "Installing LLaMA-Factory packages: ${llamafactory_packages[*]}"
-  "${pip_cmd[@]}" install "${llamafactory_packages[@]}"
+  llamafactory_fingerprint="$(
+    compute_fingerprint \
+      "$venv_python" \
+      "bucket:llamafactory" \
+      "python:$python_runtime_id" \
+      "spec:${llamafactory_packages[*]}"
+  )"
+  run_cached_step \
+    "llamafactory" \
+    "$llamafactory_fingerprint" \
+    "$(( venv_created || refresh_optional_deps ))" \
+    "Installing LLaMA-Factory packages: ${llamafactory_packages[*]}" \
+    "$venv_python" -m pip install --disable-pip-version-check --progress-bar off "${llamafactory_packages[@]}"
 fi
 
 if [[ "$skip_frontend_install" -ne 1 ]]; then
-  log "Installing frontend dependencies"
-  (
-    cd "$repo_root/frontend"
-    if [[ -f package-lock.json ]]; then
-      npm ci
-    else
-      npm install
-    fi
+  frontend_manifest="$repo_root/frontend/package.json"
+  frontend_lockfile="$repo_root/frontend/package-lock.json"
+  frontend_node_modules="$repo_root/frontend/node_modules"
+  node_runtime_id="$(node -v 2>/dev/null || echo unknown-node)"
+  frontend_fingerprint_args=(
+    "bucket:frontend"
+    "node:$node_runtime_id"
+    "file:$frontend_manifest"
   )
+  if [[ -f "$frontend_lockfile" ]]; then
+    frontend_fingerprint_args+=("file:$frontend_lockfile")
+  fi
+  frontend_fingerprint="$(compute_fingerprint "$venv_python" "${frontend_fingerprint_args[@]}")"
+  frontend_force_run=0
+  if [[ "$refresh_frontend_deps" -eq 1 || ! -d "$frontend_node_modules" ]]; then
+    frontend_force_run=1
+  fi
+
+  if [[ -f "$frontend_lockfile" ]]; then
+    run_cached_step \
+      "frontend-deps" \
+      "$frontend_fingerprint" \
+      "$frontend_force_run" \
+      "Installing frontend dependencies with npm ci" \
+      bash -lc "cd '$repo_root/frontend' && npm ci --no-audit --no-fund"
+  else
+    run_cached_step \
+      "frontend-deps" \
+      "$frontend_fingerprint" \
+      "$frontend_force_run" \
+      "Installing frontend dependencies with npm install" \
+      bash -lc "cd '$repo_root/frontend' && npm install --no-audit --no-fund"
+  fi
 elif [[ "$setup_only" -ne 1 && "$start_frontend" -eq 1 && ! -d "$repo_root/frontend/node_modules" ]]; then
   die "frontend/node_modules is missing. Re-run without --skip-frontend-install or use --no-frontend."
 fi
 
 write_profile_envs() {
-  "$venv_python" - "$repo_root" "$profile" "$api_host" "$api_port" "$frontend_host" "$frontend_port" "$redis_url" "$vllm_host" "$vllm_port" "$embedded_worker" "$llamafactory_cli" <<'PY'
+  "$venv_python" - "$repo_root" "$profile" "$api_host" "$api_port" "$frontend_host" "$frontend_port" "$redis_url" "$vllm_base_url" "$embedded_worker" "$llamafactory_cli" <<'PY'
 from __future__ import annotations
 
 import json
@@ -530,10 +1231,9 @@ api_port = sys.argv[4]
 frontend_host = sys.argv[5]
 frontend_port = sys.argv[6]
 redis_url = sys.argv[7]
-vllm_host = sys.argv[8]
-vllm_port = sys.argv[9]
-embedded_worker = sys.argv[10] == "1"
-llamafactory_cli = sys.argv[11]
+vllm_base_url = sys.argv[8]
+embedded_worker = sys.argv[9] == "1"
+llamafactory_cli = sys.argv[10]
 
 profile = read_system_profile(profile_name, root_dir=repo_root)
 backend_values = dict(profile["backend"])
@@ -552,7 +1252,7 @@ backend_values["PORT"] = api_port
 backend_values["REDIS_URL"] = redis_url
 backend_values["TASK_EMBEDDED_WORKER"] = "true" if embedded_worker else "false"
 backend_values["CORS_ALLOW_ORIGINS"] = json.dumps(frontend_origins, ensure_ascii=False)
-backend_values["VLLM_BASE_URL"] = f"http://{vllm_host}:{vllm_port}"
+backend_values["VLLM_BASE_URL"] = vllm_base_url
 backend_values["LLAMAFACTORY_CLI"] = llamafactory_cli
 
 frontend_values["VITE_APP_PROFILE"] = profile_name
@@ -566,8 +1266,10 @@ PY
 write_profile_envs
 
 if [[ "$download_sam3_checkpoint" -eq 1 ]]; then
-  log "Downloading SAM3 checkpoint family: $sam3_version"
-  "$venv_python" - "$repo_root" "$sam3_version" <<'PY'
+  run_logged_step \
+    "Downloading SAM3 checkpoint family: $sam3_version" \
+    "$setup_log_dir/download-sam3.log" \
+    "$venv_python" - "$repo_root" "$sam3_version" <<'PY'
 from __future__ import annotations
 
 import shutil
@@ -589,100 +1291,40 @@ PY
 fi
 
 if [[ "$run_tests" -eq 1 ]]; then
-  log "Running compileall"
-  "$venv_python" -m compileall "$repo_root/backend" "$repo_root/tests" "$repo_root/scripts"
-  log "Running pytest"
-  "$venv_python" -m pytest -q
+  run_logged_step \
+    "Running compileall" \
+    "$setup_log_dir/compileall.log" \
+    "$venv_python" -m compileall "$repo_root/backend" "$repo_root/tests" "$repo_root/scripts"
+
+  run_logged_step \
+    "Running pytest" \
+    "$setup_log_dir/pytest.log" \
+    "$venv_python" -m pytest -q
+
   if [[ "$skip_frontend_install" -eq 1 ]]; then
     warn "Skipping frontend build because --skip-frontend-install was used."
   else
-    log "Running frontend build"
-    (
-      cd "$repo_root/frontend"
+    run_logged_step_in_dir \
+      "Running frontend build" \
+      "$setup_log_dir/frontend-build.log" \
+      "$repo_root/frontend" \
       npm run build
-    )
   fi
 fi
 
 if [[ "$setup_only" -eq 1 ]]; then
-  log "Setup complete."
-  log "Profile      : $profile"
-  log "Backend env  : $repo_root/.env.active"
-  log "Frontend env : $repo_root/frontend/.env.local"
-  log "Virtualenv   : $venv_dir"
+  cat <<EOF
+
+Setup complete.
+  Profile       : $profile
+  Backend env   : $repo_root/.env.active
+  Frontend env  : $repo_root/frontend/.env.local
+  Virtualenv    : $venv_dir
+  Logs          : $session_log_dir
+  Install cache : $install_state_dir
+EOF
   exit 0
 fi
-
-timestamp="$(date +%Y%m%d-%H%M%S)"
-managed_log_dir="$repo_root/logs/start-linux-$timestamp"
-mkdir -p "$managed_log_dir"
-
-tail_last_lines() {
-  local path="$1"
-  if [[ -f "$path" ]]; then
-    printf '\n----- %s (last 40 lines) -----\n' "$path" >&2
-    tail -n 40 "$path" >&2 || true
-  fi
-}
-
-wait_for_http() {
-  local url="$1"
-  local timeout_seconds="$2"
-  "$venv_python" - "$url" "$timeout_seconds" <<'PY'
-from __future__ import annotations
-
-import sys
-import time
-import urllib.error
-import urllib.request
-
-url = sys.argv[1]
-timeout_seconds = float(sys.argv[2])
-deadline = time.monotonic() + timeout_seconds
-last_error = ""
-while time.monotonic() < deadline:
-    try:
-        with urllib.request.urlopen(url, timeout=2.0) as response:
-            if 200 <= response.status < 500:
-                raise SystemExit(0)
-    except Exception as exc:  # noqa: BLE001
-        last_error = str(exc)
-        time.sleep(0.3)
-raise SystemExit(last_error or "timeout")
-PY
-}
-
-ping_redis_url() {
-  local url="$1"
-  "$venv_python" - "$url" <<'PY'
-from __future__ import annotations
-
-import sys
-
-import redis
-
-client = redis.Redis.from_url(
-    sys.argv[1],
-    decode_responses=True,
-    socket_connect_timeout=2.0,
-    socket_timeout=2.0,
-)
-client.ping()
-PY
-}
-
-start_service() {
-  local name="$1"
-  shift
-  local log_path="$managed_log_dir/${name}.log"
-  log "Starting $name"
-  (
-    cd "$repo_root"
-    "$@"
-  ) >"$log_path" 2>&1 &
-  started_pid="$!"
-  managed_pids+=("$started_pid")
-}
 
 redis_reused=0
 if ping_redis_url "$redis_url" >/dev/null 2>&1; then
@@ -692,9 +1334,9 @@ else
   command -v redis-server >/dev/null 2>&1 || die "redis-server was not found."
   start_service redis redis-server --save '' --appendonly no --bind "$redis_host" --port "$redis_port" --protected-mode no
   redis_pid="$started_pid"
-  sleep 0.5
+  sleep 1
   ping_redis_url "$redis_url" >/dev/null 2>&1 || {
-    tail_last_lines "$managed_log_dir/redis.log"
+    tail_last_lines "$managed_log_dir/redis.log" 80
     die "Managed Redis failed to start at $redis_url"
   }
   log "Managed Redis started with pid $redis_pid"
@@ -732,19 +1374,48 @@ fi
 
 if [[ "$start_local_vllm" -eq 1 ]]; then
   command -v nvidia-smi >/dev/null 2>&1 || die "Local vLLM requested, but nvidia-smi was not found. Supply an external VLLM_BASE_URL or use --skip-vllm."
+  vllm_model_source="$(normalize_local_model_source "$vllm_model_source")"
+
   if [[ -z "$vllm_served_model_name" ]]; then
     vllm_served_model_name="$profile_vllm_model_name"
+    vllm_served_model_name_source="profile"
   fi
-  if [[ -z "$vllm_max_model_len" ]]; then
+  if [[ -z "$vllm_max_model_len" && -n "$profile_vllm_max_model_len" ]]; then
     vllm_max_model_len="$profile_vllm_max_model_len"
+    vllm_max_model_len_source="profile"
   fi
-  if [[ -z "$vllm_gpu_memory_utilization" ]]; then
+  if [[ -z "$vllm_gpu_memory_utilization" && -n "$profile_vllm_gpu_memory_utilization" ]]; then
     vllm_gpu_memory_utilization="$profile_vllm_gpu_memory_utilization"
+    vllm_gpu_memory_utilization_source="profile"
   fi
-  if [[ -z "$vllm_max_num_seqs" ]]; then
+  if [[ -z "$vllm_max_num_seqs" && -n "$profile_vllm_max_num_seqs" ]]; then
     vllm_max_num_seqs="$profile_vllm_max_num_seqs"
+    vllm_max_num_seqs_source="profile"
   fi
+
+  visible_gpu_memory_mib="$(detect_visible_gpu_memory_mib)"
+  apply_vllm_safe_defaults "$visible_gpu_memory_mib"
+
+  vllm_base_url="http://${vllm_host}:${vllm_port}"
+  write_profile_envs
+
+  log "Resolved local vLLM settings:"
+  log "  model_source=$vllm_model_source"
+  log "  served_model_name=${vllm_served_model_name:-<empty>}"
+  log "  gpu_memory_mib=${visible_gpu_memory_mib:-unknown}"
+  log "  max_model_len=${vllm_max_model_len:-<auto>}"
+  log "  gpu_memory_utilization=${vllm_gpu_memory_utilization:-<auto>}"
+  log "  max_num_seqs=${vllm_max_num_seqs:-<auto>}"
+  log "  dtype=${vllm_dtype:-<auto>}"
+  log "  tensor_parallel_size=${vllm_tensor_parallel_size:-<default>}"
+  log "  pipeline_parallel_size=${vllm_pipeline_parallel_size:-<default>}"
+  log "  max_num_batched_tokens=${vllm_max_num_batched_tokens:-<default>}"
+  log "  swap_space=${vllm_swap_space:-<default>}"
+  log "  safe_mode=$vllm_safe_mode"
+
   vllm_command=(
+    env
+    PYTHONUNBUFFERED=1
     "$venv_python"
     -m
     vllm.entrypoints.openai.api_server
@@ -762,26 +1433,59 @@ if [[ "$start_local_vllm" -eq 1 ]]; then
   if [[ -n "$vllm_max_num_seqs" ]]; then
     vllm_command+=(--max-num-seqs "$vllm_max_num_seqs")
   fi
+  if [[ -n "$vllm_dtype" ]]; then
+    vllm_command+=(--dtype "$vllm_dtype")
+  fi
+  if [[ -n "$vllm_tensor_parallel_size" ]]; then
+    vllm_command+=(--tensor-parallel-size "$vllm_tensor_parallel_size")
+  fi
+  if [[ -n "$vllm_pipeline_parallel_size" ]]; then
+    vllm_command+=(--pipeline-parallel-size "$vllm_pipeline_parallel_size")
+  fi
+  if [[ -n "$vllm_max_num_batched_tokens" ]]; then
+    vllm_command+=(--max-num-batched-tokens "$vllm_max_num_batched_tokens")
+  fi
+  if [[ -n "$vllm_swap_space" ]]; then
+    vllm_command+=(--swap-space "$vllm_swap_space")
+  fi
+  if [[ -n "$vllm_cpu_offload_gb" ]]; then
+    vllm_command+=(--cpu-offload-gb "$vllm_cpu_offload_gb")
+  fi
+  if [[ -n "$vllm_download_dir" ]]; then
+    mkdir -p "$vllm_download_dir"
+    vllm_command+=(--download-dir "$vllm_download_dir")
+  fi
+  if [[ "$vllm_enforce_eager" -eq 1 ]]; then
+    vllm_command+=(--enforce-eager)
+  fi
+  if [[ "$vllm_disable_custom_all_reduce" -eq 1 ]]; then
+    vllm_command+=(--disable-custom-all-reduce)
+  fi
+  if [[ ${#vllm_extra_args[@]} -gt 0 ]]; then
+    vllm_command+=("${vllm_extra_args[@]}")
+  fi
+
   start_service vllm "${vllm_command[@]}"
   vllm_pid="$started_pid"
-  wait_for_http "http://${vllm_host}:${vllm_port}/health" 180 >/dev/null 2>&1 || wait_for_http "http://${vllm_host}:${vllm_port}/v1/models" 180 >/dev/null 2>&1 || {
-    tail_last_lines "$managed_log_dir/vllm.log"
+  readarray -t vllm_probe_urls < <(build_vllm_probe_urls "$vllm_base_url")
+  wait_for_service_ready "Local vLLM" "$vllm_pid" "$vllm_start_timeout" "$managed_log_dir/vllm.log" "${vllm_probe_urls[@]}" || {
     die "Local vLLM failed to become healthy."
   }
   log "Local vLLM started with pid $vllm_pid"
 elif [[ "$annotation_backend" == "openai_compatible" ]]; then
-  wait_for_http "http://${vllm_host}:${vllm_port}/health" 20 >/dev/null 2>&1 || wait_for_http "http://${vllm_host}:${vllm_port}/v1/models" 20 >/dev/null 2>&1 || {
-    die "Profile ${profile} expects an OpenAI-compatible endpoint at http://${vllm_host}:${vllm_port}, but it is not healthy. Pass --vllm-model-source with --with-vllm, or point VLLM_BASE_URL to a running service."
+  readarray -t vllm_probe_urls < <(build_vllm_probe_urls "$vllm_base_url")
+  wait_for_any_url 20 "${vllm_probe_urls[@]}" || {
+    die "Profile ${profile} expects an OpenAI-compatible endpoint at ${vllm_base_url}, but it is not healthy. Pass --vllm-model-source with --with-vllm, or point VLLM_BASE_URL to a running service."
   }
-  log "Using external/already-running OpenAI-compatible endpoint at http://${vllm_host}:${vllm_port}"
+  log "Using external/already-running OpenAI-compatible endpoint at ${vllm_base_url}"
 fi
 
 if [[ "$embedded_worker" -eq 0 ]]; then
-  start_service worker "$venv_python" -m backend.task_worker_main
+  start_service worker env PYTHONUNBUFFERED=1 "$venv_python" -m backend.task_worker_main
   worker_pid="$started_pid"
-  sleep 0.5
+  sleep 1
   if ! kill -0 "$worker_pid" >/dev/null 2>&1; then
-    tail_last_lines "$managed_log_dir/worker.log"
+    tail_last_lines "$managed_log_dir/worker.log" 80
     die "Worker exited early."
   fi
   log "Standalone worker started with pid $worker_pid"
@@ -789,10 +1493,9 @@ else
   log "Using embedded task worker."
 fi
 
-start_service backend "$venv_python" -m uvicorn backend.main:app --host "$api_host" --port "$api_port"
+start_service backend env PYTHONUNBUFFERED=1 "$venv_python" -m uvicorn backend.main:app --host "$api_host" --port "$api_port"
 backend_pid="$started_pid"
-wait_for_http "http://${api_host}:${api_port}/healthz" 60 >/dev/null 2>&1 || {
-  tail_last_lines "$managed_log_dir/backend.log"
+wait_for_service_ready "Backend" "$backend_pid" 60 "$managed_log_dir/backend.log" "http://${api_host}:${api_port}/healthz" || {
   die "Backend did not become healthy."
 }
 log "Backend started with pid $backend_pid"
@@ -800,8 +1503,7 @@ log "Backend started with pid $backend_pid"
 if [[ "$start_frontend" -eq 1 ]]; then
   start_service frontend bash -lc "cd '$repo_root/frontend' && npm run dev -- --host '$frontend_host' --port '$frontend_port' --strictPort"
   frontend_pid="$started_pid"
-  wait_for_http "http://${frontend_host}:${frontend_port}" 90 >/dev/null 2>&1 || {
-    tail_last_lines "$managed_log_dir/frontend.log"
+  wait_for_service_ready "Frontend" "$frontend_pid" 90 "$managed_log_dir/frontend.log" "http://${frontend_host}:${frontend_port}" || {
     die "Frontend did not become healthy."
   }
   log "Frontend started with pid $frontend_pid"
@@ -815,8 +1517,9 @@ Ready.
   Health        : http://${api_host}:${api_port}/healthz
   Frontend      : $( [[ "$start_frontend" -eq 1 ]] && printf 'http://%s:%s' "$frontend_host" "$frontend_port" || printf 'disabled' )
   Redis         : $redis_url$( [[ "$redis_reused" -eq 1 ]] && printf ' (reused)' || printf ' (managed)' )
-  OpenAI route  : http://${vllm_host}:${vllm_port}
-  Logs          : $managed_log_dir
+  OpenAI route  : $vllm_base_url
+  Logs          : $session_log_dir
+  Install cache : $install_state_dir
 
 Press Ctrl+C to stop all managed services.
 EOF
@@ -827,7 +1530,7 @@ while true; do
     if ! kill -0 "$pid" >/dev/null 2>&1; then
       warn "A managed service exited unexpectedly."
       for log_file in "$managed_log_dir"/*.log; do
-        tail_last_lines "$log_file"
+        tail_last_lines "$log_file" 80
       done
       exit 1
     fi
