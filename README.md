@@ -138,7 +138,7 @@ npm run dev
 - 项目级 `active_model_tag` 显式切换，支持 `base` 和已完成的 `lora:{job_id}`
 - 自动标注和评估真正按照当前 `active_model_tag` 路由，而不是只把它当展示字段
 - 当 `ANNOTATION_BACKEND=openai_compatible` 时，优先走 vLLM / OpenAI-compatible 请求；失败后会清晰回退到 `stub`
-- 图片详情页会展示自动标注实例的运行时来源，例如 `stub · base -> qwen3-vl-4b · fallback`
+- 图片详情页会展示自动标注实例的运行时来源，例如 `stub · base -> qwen3-vl-8b · fallback`
 - 评估卡片会展示本次 run 的实际路由摘要，例如 `route=lora:6 -> lora:6`
 
 当前实现的真实状态：
