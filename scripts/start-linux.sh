@@ -808,6 +808,7 @@ apply_vllm_safe_defaults() {
   local safe_max_num_seqs=""
   local safe_max_num_batched_tokens=""
   local safe_swap_space=""
+  local safe_cpu_offload_gb=""
 
   if [[ "$vllm_safe_mode" -ne 1 ]]; then
     return 0
@@ -815,23 +816,33 @@ apply_vllm_safe_defaults() {
 
   if [[ "$gpu_mib" =~ ^[0-9]+$ ]] && (( gpu_mib > 0 )); then
     if (( gpu_mib <= 12288 )); then
+      safe_max_model_len="1024"
+      safe_gpu_util="0.68"
+      safe_max_num_seqs="1"
+      safe_max_num_batched_tokens="512"
+      safe_swap_space="8"
+      safe_cpu_offload_gb="12"
+    elif (( gpu_mib <= 18432 )); then
       safe_max_model_len="2048"
       safe_gpu_util="0.72"
       safe_max_num_seqs="1"
       safe_max_num_batched_tokens="1024"
       safe_swap_space="8"
+      safe_cpu_offload_gb="8"
     elif (( gpu_mib <= 24576 )); then
       safe_max_model_len="4096"
       safe_gpu_util="0.82"
       safe_max_num_seqs="1"
       safe_max_num_batched_tokens="2048"
       safe_swap_space="8"
+      safe_cpu_offload_gb="4"
     else
       safe_max_model_len="8192"
       safe_gpu_util="0.90"
       safe_max_num_seqs="2"
       safe_max_num_batched_tokens="4096"
       safe_swap_space="4"
+      safe_cpu_offload_gb="0"
     fi
   else
     safe_max_model_len="4096"
@@ -839,6 +850,7 @@ apply_vllm_safe_defaults() {
     safe_max_num_seqs="1"
     safe_max_num_batched_tokens="2048"
     safe_swap_space="8"
+    safe_cpu_offload_gb="4"
   fi
 
   if [[ -z "$vllm_max_model_len" ]]; then
@@ -880,11 +892,26 @@ apply_vllm_safe_defaults() {
   if [[ -z "$vllm_max_num_batched_tokens" ]]; then
     vllm_max_num_batched_tokens="$safe_max_num_batched_tokens"
     vllm_max_num_batched_tokens_source="auto"
+  elif [[ "$vllm_max_num_batched_tokens_source" == "profile" && "$vllm_max_num_batched_tokens" =~ ^[0-9]+$ && "$safe_max_num_batched_tokens" =~ ^[0-9]+$ && "$vllm_max_num_batched_tokens" -gt "$safe_max_num_batched_tokens" ]]; then
+    warn "Profile requested VLLM_MAX_NUM_BATCHED_TOKENS=$vllm_max_num_batched_tokens, but safe mode clamps it to $safe_max_num_batched_tokens."
+    vllm_max_num_batched_tokens="$safe_max_num_batched_tokens"
+    vllm_max_num_batched_tokens_source="auto-clamped"
   fi
 
   if [[ -z "$vllm_swap_space" ]]; then
     vllm_swap_space="$safe_swap_space"
     vllm_swap_space_source="auto"
+  fi
+
+  if [[ -z "$vllm_cpu_offload_gb" ]]; then
+    if [[ -n "$safe_cpu_offload_gb" && "$safe_cpu_offload_gb" != "0" ]]; then
+      vllm_cpu_offload_gb="$safe_cpu_offload_gb"
+      vllm_cpu_offload_gb_source="auto"
+    fi
+  elif [[ "$vllm_cpu_offload_gb_source" == "profile" && "$vllm_cpu_offload_gb" =~ ^[0-9]+$ && "$safe_cpu_offload_gb" =~ ^[0-9]+$ && "$safe_cpu_offload_gb" -gt "$vllm_cpu_offload_gb" ]]; then
+    warn "Profile requested VLLM_CPU_OFFLOAD_GB=$vllm_cpu_offload_gb, but safe mode raises it to $safe_cpu_offload_gb for this GPU."
+    vllm_cpu_offload_gb="$safe_cpu_offload_gb"
+    vllm_cpu_offload_gb_source="auto-clamped"
   fi
 
   if [[ "$vllm_enforce_eager_explicit" -eq 0 ]]; then
@@ -1537,6 +1564,8 @@ print(payload.get("VLLM_MODEL_NAME", "qwen3-vl-4b"))
 print(payload.get("VLLM_MAX_MODEL_LEN", ""))
 print(payload.get("VLLM_GPU_MEMORY_UTILIZATION", ""))
 print(payload.get("VLLM_MAX_NUM_SEQS", ""))
+print(payload.get("VLLM_MAX_NUM_BATCHED_TOKENS", ""))
+print(payload.get("VLLM_CPU_OFFLOAD_GB", ""))
 PY
 )
 annotation_backend="${_runtime_env_parts[0]:-stub}"
@@ -1544,6 +1573,8 @@ profile_vllm_model_name="${_runtime_env_parts[1]:-qwen3-vl-4b}"
 profile_vllm_max_model_len="${_runtime_env_parts[2]:-}"
 profile_vllm_gpu_memory_utilization="${_runtime_env_parts[3]:-}"
 profile_vllm_max_num_seqs="${_runtime_env_parts[4]:-}"
+profile_vllm_max_num_batched_tokens="${_runtime_env_parts[5]:-}"
+profile_vllm_cpu_offload_gb="${_runtime_env_parts[6]:-}"
 
 if [[ "$annotation_backend" == "openai_compatible" && "$with_vllm" == "yes" && -n "$vllm_model_source" ]]; then
   start_local_vllm=1
@@ -1568,6 +1599,14 @@ if [[ "$start_local_vllm" -eq 1 ]]; then
   if [[ -z "$vllm_max_num_seqs" && -n "$profile_vllm_max_num_seqs" ]]; then
     vllm_max_num_seqs="$profile_vllm_max_num_seqs"
     vllm_max_num_seqs_source="profile"
+  fi
+  if [[ -z "$vllm_max_num_batched_tokens" && -n "$profile_vllm_max_num_batched_tokens" ]]; then
+    vllm_max_num_batched_tokens="$profile_vllm_max_num_batched_tokens"
+    vllm_max_num_batched_tokens_source="profile"
+  fi
+  if [[ -z "$vllm_cpu_offload_gb" && -n "$profile_vllm_cpu_offload_gb" ]]; then
+    vllm_cpu_offload_gb="$profile_vllm_cpu_offload_gb"
+    vllm_cpu_offload_gb_source="profile"
   fi
 
   visible_gpu_memory_mib="$(detect_visible_gpu_memory_mib)"
