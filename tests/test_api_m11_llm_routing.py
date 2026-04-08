@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import shutil
 import time
 from pathlib import Path
@@ -13,6 +14,7 @@ from PIL import Image as PILImage
 from backend.app import create_app
 from backend.config import get_settings
 from backend.database import get_engine, get_session_factory
+from backend.services.vllm_client import _extract_json_text, _normalize_response_payload
 
 
 def _make_png_bytes(
@@ -238,6 +240,28 @@ def test_openai_annotation_uses_profile_resolved_model_and_records_inference_met
     assert inference["request_model_name"] == "qwen3-vl-8b"
     assert inference["resolved_project_profile"] == "demo_prod"
     assert inference["fallback_used"] is False
+
+
+def test_qwen_array_payload_is_normalized_into_annotations():
+    payload = json.loads(
+        _extract_json_text(
+            """```json
+[
+  {"label": "cat", "bbox": [12, 111, 497, 985], "confidence": 0.99},
+  {"label": "couch", "bbox": [0, 0, 1000, 1000], "confidence": 0.88}
+]
+```"""
+        )
+    )
+
+    annotations = _normalize_response_payload(payload, ["cat", "couch"])
+
+    assert len(annotations) == 2
+    assert annotations[0].label == "cat"
+    assert annotations[0].bbox == [0.012, 0.111, 0.497, 0.985]
+    assert annotations[0].confidence == 0.99
+    assert annotations[1].label == "couch"
+    assert annotations[1].bbox == [0.0, 0.0, 1.0, 1.0]
 
 
 def test_openai_failure_falls_back_to_stub_and_keeps_route_metadata(

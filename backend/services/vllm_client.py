@@ -203,10 +203,11 @@ def run_openai_compatible_annotation(
     max_tokens: int | None = None,
 ) -> VLLMCallResult:
     settings = get_settings()
+    requested_max_tokens = int(max_tokens or settings.llm_max_tokens)
     payload = {
         "model": route.request_model_name,
         "temperature": 0,
-        "max_tokens": int(max_tokens or settings.llm_max_tokens),
+        "max_tokens": _cap_annotation_max_tokens(requested_max_tokens),
         "guided_json": ANNOTATION_SCHEMA,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -308,6 +309,16 @@ def _canonicalize_bbox(raw_bbox: Any) -> list[float] | None:
     except Exception:
         return None
 
+    max_coordinate = max(abs(xmin), abs(ymin), abs(xmax), abs(ymax))
+    if max_coordinate > 1.0:
+        if max_coordinate <= 1000.0:
+            xmin /= 1000.0
+            ymin /= 1000.0
+            xmax /= 1000.0
+            ymax /= 1000.0
+        else:
+            return None
+
     if xmin > xmax:
         xmin, xmax = xmax, xmin
     if ymin > ymax:
@@ -366,7 +377,7 @@ def _extract_json_text(content: Any) -> str:
         for item in content:
             if not isinstance(item, dict):
                 continue
-            if item.get("type") == "text" and isinstance(item.get("text"), str):
+            if item.get("type") in {"text", "output_text"} and isinstance(item.get("text"), str):
                 parts.append(item["text"])
         text = "\n".join(parts).strip()
     else:
@@ -379,11 +390,15 @@ def _extract_json_text(content: Any) -> str:
 
 
 def _normalize_response_payload(payload: Any, allowed_labels: list[str]) -> list[GeneratedAnnotation]:
-    if not isinstance(payload, dict):
-        return []
+    raw_objects: list[Any] | None = None
+    if isinstance(payload, list):
+        raw_objects = payload
+    elif isinstance(payload, dict):
+        maybe_objects = payload.get("objects")
+        if isinstance(maybe_objects, list):
+            raw_objects = maybe_objects
 
-    raw_objects = payload.get("objects")
-    if not isinstance(raw_objects, list):
+    if raw_objects is None:
         return []
 
     annotations: list[GeneratedAnnotation] = []
@@ -405,6 +420,15 @@ def _normalize_response_payload(payload: Any, allowed_labels: list[str]) -> list
         )
 
     return _dedupe_annotations(annotations)
+
+
+def _cap_annotation_max_tokens(requested_max_tokens: int) -> int:
+    settings = get_settings()
+    requested = max(64, int(requested_max_tokens))
+    context_window = max(0, int(settings.vllm_max_model_len or 0))
+    if context_window <= 0:
+        return requested
+    return min(requested, max(64, context_window // 2))
 
 
 def _data_url_for_path(path: Path) -> str:

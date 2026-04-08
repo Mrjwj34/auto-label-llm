@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     vllm_base_url: str = "http://127.0.0.1:8001"
     vllm_api_key: str = ""
     vllm_model_name: str = ""
+    vllm_max_model_len: int = 0
     llm_request_timeout_seconds: float = 30.0
     llm_max_retries: int = 1
     llm_max_tokens: int = 2048

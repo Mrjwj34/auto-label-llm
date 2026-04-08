@@ -13,7 +13,7 @@
     "VLLM_CPU_OFFLOAD_GB": "8",
     "LLM_REQUEST_TIMEOUT_SECONDS": "180",
     "LLM_MAX_RETRIES": "0",
-    "LLM_MAX_TOKENS": "2048",
+    "LLM_MAX_TOKENS": "1024",
     "CORS_ALLOW_ORIGINS": "[\"http://localhost:5173\", \"http://127.0.0.1:5173\"]"
   },
   "frontend": {
@@ -24,7 +24,7 @@
     "llm": {
       "base_model": "qwen3-vl-8b",
       "auto_order": ["8b", "4b", "2b"],
-      "max_tokens": 2048
+      "max_tokens": 1024
     },
     "sam": {
       "checkpoint": "sam3.1",
