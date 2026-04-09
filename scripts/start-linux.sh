@@ -103,6 +103,7 @@ vllm_last_progress_snapshot=""
 local_vllm_state_path=""
 
 declare -a managed_pids=()
+declare -a managed_pgids=()
 declare -a vllm_extra_args=()
 started_pid=""
 
@@ -228,6 +229,12 @@ cleanup() {
   local index
   for (( index=${#managed_pids[@]}-1; index>=0; index-- )); do
     local pid="${managed_pids[$index]}"
+    local pgid="${managed_pgids[$index]:-}"
+    if [[ "$pgid" =~ ^[0-9]+$ && "$pgid" -gt 1 ]]; then
+      kill -TERM -- "-$pgid" >/dev/null 2>&1 || true
+      sleep 0.2
+      kill -KILL -- "-$pgid" >/dev/null 2>&1 || true
+    fi
     if kill -0 "$pid" >/dev/null 2>&1; then
       kill "$pid" >/dev/null 2>&1 || true
       wait "$pid" >/dev/null 2>&1 || true
@@ -237,6 +244,13 @@ cleanup() {
     local state_pid
     state_pid="$(current_local_vllm_state_pid 2>/dev/null || echo 0)"
     if [[ "$state_pid" =~ ^[0-9]+$ && "$state_pid" -gt 0 ]] && kill -0 "$state_pid" >/dev/null 2>&1; then
+      local state_pgid
+      state_pgid="$(ps -o pgid= -p "$state_pid" 2>/dev/null | tr -d '[:space:]' || true)"
+      if [[ "$state_pgid" =~ ^[0-9]+$ && "$state_pgid" -gt 1 ]]; then
+        kill -TERM -- "-$state_pgid" >/dev/null 2>&1 || true
+        sleep 0.2
+        kill -KILL -- "-$state_pgid" >/dev/null 2>&1 || true
+      fi
       kill "$state_pid" >/dev/null 2>&1 || true
       wait "$state_pid" >/dev/null 2>&1 || true
     fi
@@ -858,14 +872,29 @@ start_service() {
   log "Starting $name (log: $log_path)"
   (
     cd "$repo_root"
-    if command -v stdbuf >/dev/null 2>&1; then
-      exec stdbuf -oL -eL "$@"
+    if command -v setsid >/dev/null 2>&1; then
+      if command -v stdbuf >/dev/null 2>&1; then
+        exec setsid stdbuf -oL -eL "$@"
+      else
+        exec setsid "$@"
+      fi
     else
-      exec "$@"
+      if command -v stdbuf >/dev/null 2>&1; then
+        exec stdbuf -oL -eL "$@"
+      else
+        exec "$@"
+      fi
     fi
   ) >"$log_path" 2>&1 &
   started_pid="$!"
+  local started_pgid="$started_pid"
+  local resolved_pgid
+  resolved_pgid="$(ps -o pgid= -p "$started_pid" 2>/dev/null | tr -d '[:space:]' || true)"
+  if [[ "$resolved_pgid" =~ ^[0-9]+$ && "$resolved_pgid" -gt 1 ]]; then
+    started_pgid="$resolved_pgid"
+  fi
   managed_pids+=("$started_pid")
+  managed_pgids+=("$started_pgid")
 }
 
 node_major_version() {
