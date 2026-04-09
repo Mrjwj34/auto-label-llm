@@ -89,19 +89,22 @@ def generate_lora_config(project: Project, job_id: int) -> dict[str, Any]:
     if not requested_base_model:
         raise AppError(400, "no base LLM model configured for finetune")
     model_name_or_path = _resolve_finetune_model_name(requested_base_model)
+    serving_base_model = _resolve_serving_base_model_name(requested_base_model)
 
     workspace_dir = _job_workspace_root(project.id, job_id)
     output_dir = (model_root / str(job_id)).resolve()
     dataset_name = f"project_{project.id}_train"
     template = _resolve_llamafactory_template(model_name_or_path)
     precision = _resolve_training_precision(vram_gb)
+    quantization_bit = _resolve_training_quantization_bit(vram_gb)
 
-    return {
+    config = {
         "project_id": project.id,
         "job_id": job_id,
         "runner_backend": "pending",
         "model_name_or_path": model_name_or_path,
         "requested_base_model": requested_base_model,
+        "serving_base_model": serving_base_model,
         "template": template,
         "finetuning_type": "lora",
         "stage": "sft",
@@ -115,7 +118,7 @@ def generate_lora_config(project: Project, job_id: int) -> dict[str, Any]:
         "gradient_accumulation_steps": 8,
         "num_train_epochs": 3,
         "learning_rate": 1e-4,
-        "cutoff_len": 4096,
+        "cutoff_len": _resolve_training_cutoff_len(vram_gb),
         "logging_steps": 1,
         "save_steps": 50,
         "plot_loss": True,
@@ -128,7 +131,17 @@ def generate_lora_config(project: Project, job_id: int) -> dict[str, Any]:
         "vram_gb": round(vram_gb, 2),
         "precision": precision,
         "runtime_lora_update": bool(get_settings().vllm_enable_runtime_lora_update),
+        "lora_rank": 8,
+        "lora_target": "all",
     }
+
+    if quantization_bit is not None:
+        config["quantization_bit"] = quantization_bit
+        if quantization_bit == 4:
+            config["quantization_type"] = "nf4"
+            config["double_quantization"] = True
+
+    return config
 
 
 def _build_training_prompt(labels: list[str], image_id: int) -> str:
@@ -454,7 +467,7 @@ def _prepare_training_assets(project: Project, job: FinetuneJob, config: dict[st
 
 def _build_train_runtime_config(config: dict[str, Any]) -> dict[str, Any]:
     precision = str(config.get("precision") or "fp16")
-    return {
+    runtime_config = {
         "model_name_or_path": str(config.get("model_name_or_path") or ""),
         "template": str(config.get("template") or "default"),
         "finetuning_type": str(config.get("finetuning_type") or "lora"),
@@ -480,7 +493,17 @@ def _build_train_runtime_config(config: dict[str, Any]) -> dict[str, Any]:
         "overwrite_cache": bool(config.get("overwrite_cache", True)),
         "bf16": precision == "bf16",
         "fp16": precision == "fp16",
+        "lora_rank": int(config.get("lora_rank") or 8),
+        "lora_target": str(config.get("lora_target") or "all"),
     }
+
+    quantization_bit = config.get("quantization_bit")
+    if quantization_bit is not None:
+        runtime_config["quantization_bit"] = int(quantization_bit)
+        runtime_config["quantization_type"] = str(config.get("quantization_type") or "nf4")
+        runtime_config["double_quantization"] = bool(config.get("double_quantization", True))
+
+    return runtime_config
 
 
 def _load_job_config(job: FinetuneJob) -> dict[str, Any]:
@@ -692,13 +715,44 @@ def _resolve_finetune_model_name(base_model_name: str) -> str:
 
     served_name = str(settings.vllm_model_name or "").strip()
     source_name = str(settings.vllm_model_source or "").strip()
+    candidate = requested
     if source_name and served_name and requested == served_name:
-        return source_name
-    return requested
+        candidate = source_name
+    return _normalize_training_model_name(candidate)
+
+
+def _resolve_serving_base_model_name(base_model_name: str) -> str:
+    requested = str(base_model_name or "").strip()
+    if requested:
+        return requested
+    return str(get_settings().vllm_model_name or "").strip()
+
+
+def _normalize_training_model_name(model_name_or_path: str) -> str:
+    text = str(model_name_or_path or "").strip()
+    if not text:
+        return ""
+    if text.casefold().endswith("-fp8"):
+        return text[:-4]
+    return text
 
 
 def _resolve_training_precision(vram_gb: float) -> str:
     return "bf16" if vram_gb >= 10 else "fp16"
+
+
+def _resolve_training_cutoff_len(vram_gb: float) -> int:
+    if vram_gb < 12:
+        return 1024
+    if vram_gb < 20:
+        return 2048
+    return 4096
+
+
+def _resolve_training_quantization_bit(vram_gb: float) -> int | None:
+    if vram_gb < 20:
+        return 4
+    return None
 
 
 def _progress_from_epoch(epoch: int, epoch_count: int) -> int:

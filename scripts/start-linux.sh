@@ -184,7 +184,7 @@ Environment overrides:
   TORCH_EXTRA_INDEX_URL      Torch wheel index. Default: https://download.pytorch.org/whl/cu126
   SAM3_PIP_SPEC              SAM3 packages. Default: "git+https://github.com/facebookresearch/sam3.git huggingface_hub"
   VLLM_PIP_SPEC              vLLM packages. Default: "vllm"
-  LLAMAFACTORY_PIP_SPEC      LLaMA-Factory package. Default: "llamafactory"
+  LLAMAFACTORY_PIP_SPEC      LLaMA-Factory packages. Default: "llamafactory bitsandbytes"
   VLLM_MAX_MODEL_LEN         Optional vLLM max context length override
   VLLM_GPU_MEMORY_UTILIZATION Optional vLLM GPU memory fraction override
   VLLM_MAX_NUM_SEQS          Optional vLLM max concurrent sequences override
@@ -1480,7 +1480,7 @@ if [[ "$with_vllm" == "yes" ]]; then
 fi
 
 if [[ "$with_llamafactory" == "yes" ]]; then
-  read -r -a llamafactory_packages <<<"${LLAMAFACTORY_PIP_SPEC:-llamafactory}"
+  read -r -a llamafactory_packages <<<"${LLAMAFACTORY_PIP_SPEC:-llamafactory bitsandbytes}"
   llamafactory_fingerprint="$(
     compute_fingerprint \
       "$venv_python" \

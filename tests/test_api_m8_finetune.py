@@ -249,8 +249,9 @@ def test_build_train_runtime_config_excludes_internal_metadata():
             "project_id": 7,
             "job_id": 11,
             "runner_backend": "llamafactory",
-            "model_name_or_path": "Qwen/Qwen3-VL-8B-Instruct-FP8",
+            "model_name_or_path": "Qwen/Qwen3-VL-8B-Instruct",
             "requested_base_model": "qwen3-vl-8b",
+            "serving_base_model": "qwen3-vl-8b",
             "template": "qwen3_vl",
             "dataset": "project_7_train",
             "dataset_dir": "data/projects/7/exports/finetune/job_11",
@@ -259,18 +260,25 @@ def test_build_train_runtime_config_excludes_internal_metadata():
             "dataset_path": "data/projects/7/exports/finetune/job_11/project_7_train.jsonl",
             "output_dir": "models/lora/11",
             "precision": "bf16",
+            "quantization_bit": 4,
+            "quantization_type": "nf4",
+            "double_quantization": True,
         }
     )
 
-    assert runtime["model_name_or_path"] == "Qwen/Qwen3-VL-8B-Instruct-FP8"
+    assert runtime["model_name_or_path"] == "Qwen/Qwen3-VL-8B-Instruct"
     assert runtime["template"] == "qwen3_vl"
     assert runtime["bf16"] is True
     assert runtime["fp16"] is False
+    assert runtime["quantization_bit"] == 4
+    assert runtime["quantization_type"] == "nf4"
+    assert runtime["double_quantization"] is True
     assert "dataset_info_path" not in runtime
     assert "dataset_path" not in runtime
     assert "train_config_path" not in runtime
     assert "project_id" not in runtime
     assert "job_id" not in runtime
+    assert "serving_base_model" not in runtime
 
 
 def test_resolve_finetune_model_name_prefers_vllm_model_source(monkeypatch):
@@ -278,5 +286,30 @@ def test_resolve_finetune_model_name_prefers_vllm_model_source(monkeypatch):
     monkeypatch.setenv("VLLM_MODEL_SOURCE", "Qwen/Qwen3-VL-8B-Instruct-FP8")
     get_settings.cache_clear()
 
-    assert finetune_service._resolve_finetune_model_name("qwen3-vl-8b") == "Qwen/Qwen3-VL-8B-Instruct-FP8"
+    assert finetune_service._resolve_finetune_model_name("qwen3-vl-8b") == "Qwen/Qwen3-VL-8B-Instruct"
     assert finetune_service._resolve_llamafactory_template("Qwen/Qwen3-VL-8B-Instruct-FP8") == "qwen3_vl"
+
+
+def test_generate_lora_config_prefers_trainable_source_on_low_vram(monkeypatch, client):
+    monkeypatch.setenv("VLLM_MODEL_NAME", "qwen3-vl-8b")
+    monkeypatch.setenv("VLLM_MODEL_SOURCE", "Qwen/Qwen3-VL-8B-Instruct-FP8")
+    get_settings.cache_clear()
+    monkeypatch.setattr(finetune_service, "detect_vram_gb", lambda: 16.6)
+
+    project = client.post("/api/projects", json={"name": "cfg-project", "task_type": "detection"})
+    assert project.status_code == 200
+    project_id = project.json()["data"]["id"]
+    patch = client.patch(f"/api/projects/{project_id}/settings", json={"labels": ["crack"]})
+    assert patch.status_code == 200
+
+    with finetune_service.get_session_factory()() as db:
+        project_row = db.get(finetune_service.Project, project_id)
+        config = finetune_service.generate_lora_config(project_row, job_id=99)
+
+    assert config["requested_base_model"] == "qwen3-vl-8b"
+    assert config["serving_base_model"] == "qwen3-vl-8b"
+    assert config["model_name_or_path"] == "Qwen/Qwen3-VL-8B-Instruct"
+    assert config["cutoff_len"] == 2048
+    assert config["quantization_bit"] == 4
+    assert config["quantization_type"] == "nf4"
+    assert config["double_quantization"] is True

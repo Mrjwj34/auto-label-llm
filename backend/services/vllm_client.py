@@ -351,7 +351,13 @@ def _load_finetune_job(job_id: int, *, db: Session | None = None) -> FinetuneJob
 
 def _resolve_job_base_model(job: FinetuneJob) -> str | None:
     config = _load_json_dict(job.config)
-    candidate = str(config.get("model_name_or_path") or config.get("base_model") or "").strip()
+    candidate = str(
+        config.get("serving_base_model")
+        or config.get("requested_base_model")
+        or config.get("base_model")
+        or config.get("model_name_or_path")
+        or ""
+    ).strip()
     if candidate:
         return candidate
 
