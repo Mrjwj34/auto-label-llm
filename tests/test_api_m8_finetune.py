@@ -251,6 +251,7 @@ def test_finetune_job_can_run_llamafactory_subprocess(client, monkeypatch):
 
     monkeypatch.setenv("FINETUNE_BACKEND", "llamafactory")
     monkeypatch.setenv("LLAMAFACTORY_CLI", cli_value)
+    monkeypatch.setattr(finetune_service, "_prepare_finetune_storage", lambda *args, **kwargs: {})
     get_settings.cache_clear()
 
     start = client.post("/api/finetune/start", json={"project_id": project_id})
