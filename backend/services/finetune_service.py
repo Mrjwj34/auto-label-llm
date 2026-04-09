@@ -918,7 +918,9 @@ def _write_adapter_metadata(output_dir: Path, payload: dict[str, Any]) -> None:
 def _resolve_llamafactory_template(base_model_name: str) -> str:
     lowered = base_model_name.casefold()
     if "qwen3" in lowered and "vl" in lowered:
-        return "qwen3_vl"
+        # Annotation tasks expect concise structured JSON, so the no-think
+        # template avoids training the adapter toward verbose reasoning output.
+        return "qwen3_vl_nothink"
     if "qwen" in lowered and "vl" in lowered:
         return "qwen2_vl"
     if "qwen" in lowered:

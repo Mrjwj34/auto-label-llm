@@ -247,6 +247,10 @@ def generate_auto_annotations(
             )
         except Exception as exc:
             warning = str(exc)
+            if route.route_kind != "base":
+                raise RuntimeError(
+                    f"openai-compatible annotation failed for {route.short_label()}: {warning}"
+                ) from exc
 
     annotations = _stub_annotations(image, labels, route=route)
     annotations, segmentation_runtime = _attach_segmentation_shapes(

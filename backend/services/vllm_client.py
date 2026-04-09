@@ -280,7 +280,8 @@ def run_openai_compatible_annotation(
     payload = {
         "model": route.request_model_name,
         "temperature": 0,
-        "max_tokens": _cap_annotation_max_tokens(requested_max_tokens),
+        # Bounding-box JSON should stay terse, especially for LoRA adapters.
+        "max_tokens": _cap_annotation_max_tokens(requested_max_tokens, route=route),
         "guided_json": ANNOTATION_SCHEMA,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -501,13 +502,20 @@ def _normalize_response_payload(payload: Any, allowed_labels: list[str]) -> list
     return _dedupe_annotations(annotations)
 
 
-def _cap_annotation_max_tokens(requested_max_tokens: int) -> int:
+def _cap_annotation_max_tokens(
+    requested_max_tokens: int,
+    *,
+    route: InferenceRoute | None = None,
+) -> int:
     settings = get_settings()
     requested = max(64, int(requested_max_tokens))
+    route_cap = 128 if route is not None and route.route_kind != "base" else 256
+    capped = min(requested, route_cap)
     context_window = max(0, int(settings.vllm_max_model_len or 0))
     if context_window <= 0:
-        return requested
-    return min(requested, max(64, context_window // 2))
+        return capped
+    # Leave room for prompt and image tokens; annotation JSON should be short.
+    return min(capped, max(64, context_window // 8))
 
 
 def _data_url_for_path(path: Path) -> str:

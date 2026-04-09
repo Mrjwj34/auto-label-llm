@@ -349,7 +349,7 @@ def test_build_train_runtime_config_excludes_internal_metadata():
             "model_name_or_path": "Qwen/Qwen3-VL-8B-Instruct",
             "requested_base_model": "qwen3-vl-8b",
             "serving_base_model": "qwen3-vl-8b",
-            "template": "qwen3_vl",
+            "template": "qwen3_vl_nothink",
             "dataset": "project_7_train",
             "dataset_dir": "data/projects/7/exports/finetune/job_11",
             "dataset_info_path": "data/projects/7/exports/finetune/job_11/dataset_info.json",
@@ -364,7 +364,7 @@ def test_build_train_runtime_config_excludes_internal_metadata():
     )
 
     assert runtime["model_name_or_path"] == "Qwen/Qwen3-VL-8B-Instruct"
-    assert runtime["template"] == "qwen3_vl"
+    assert runtime["template"] == "qwen3_vl_nothink"
     assert runtime["bf16"] is True
     assert runtime["fp16"] is False
     assert runtime["quantization_bit"] == 4
@@ -384,7 +384,7 @@ def test_resolve_finetune_model_name_prefers_vllm_model_source(monkeypatch):
     get_settings.cache_clear()
 
     assert finetune_service._resolve_finetune_model_name("qwen3-vl-8b") == "Qwen/Qwen3-VL-8B-Instruct"
-    assert finetune_service._resolve_llamafactory_template("Qwen/Qwen3-VL-8B-Instruct-FP8") == "qwen3_vl"
+    assert finetune_service._resolve_llamafactory_template("Qwen/Qwen3-VL-8B-Instruct-FP8") == "qwen3_vl_nothink"
 
 
 def test_generate_lora_config_prefers_trainable_source_on_low_vram(monkeypatch, client):

@@ -303,6 +303,53 @@ def test_openai_failure_falls_back_to_stub_and_keeps_route_metadata(
     assert "vllm offline" in str(inference["warning"])
 
 
+def test_lora_openai_failure_marks_task_failed_instead_of_falling_back_to_stub(
+    openai_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr("backend.services.vllm_client.httpx.Client", FakeVLLMClient)
+
+    project_id = _create_project(openai_client, name="m11-lora-failure")
+    patch = openai_client.patch(f"/api/projects/{project_id}/settings", json={"labels": ["crack"]})
+    assert patch.status_code == 200
+
+    train_image_id = _upload_image(openai_client, project_id, "train.png")
+    _create_manual_confirmed_annotation(openai_client, train_image_id)
+
+    start = openai_client.post("/api/finetune/start", json={"project_id": project_id})
+    assert start.status_code == 200
+    job_id = int(start.json()["data"]["job_id"])
+
+    finetune_status = _poll_finetune_job(openai_client, job_id)
+    assert finetune_status["status"] == "done"
+
+    activate_lora = openai_client.post(
+        f"/api/projects/{project_id}/models/activate",
+        json={"model_tag": f"lora:{job_id}"},
+    )
+    assert activate_lora.status_code == 200
+
+    FakeVLLMClient.reset(error=httpx.ReadTimeout("timed out"))
+
+    image_id = _upload_image(openai_client, project_id, "lora-timeout.png")
+    annotate = openai_client.post(f"/api/images/{image_id}/annotate")
+    assert annotate.status_code == 200
+
+    task_id = str(annotate.json()["data"]["task_id"])
+    final_task = _poll_task_until_finished(openai_client, task_id)
+    assert final_task["status"] == "FAILURE"
+    assert f"lora:{job_id}" in str(final_task["message"])
+    assert "openai-compatible annotation failed" in str(final_task["message"])
+
+    image = openai_client.get(f"/api/images/{image_id}")
+    assert image.status_code == 200
+    assert image.json()["data"]["status"] == "error"
+
+    annotations = openai_client.get(f"/api/images/{image_id}/annotations")
+    assert annotations.status_code == 200
+    assert annotations.json()["data"] == []
+
+
 def test_project_model_activation_switches_base_and_lora_and_evaluation_uses_active_tag(
     openai_client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -368,6 +415,7 @@ def test_project_model_activation_switches_base_and_lora_and_evaluation_uses_act
     assert payload["images"][0]["image_id"] == val_image_id
     assert payload["images"][0]["inference"]["provider"] == "openai_compatible"
     assert payload["images"][0]["inference"]["request_model_name"] == f"lora:{job_id}"
+    assert FakeVLLMClient.requests[0]["json"]["max_tokens"] == 128
 
 
 def test_project_model_activation_can_sync_vllm_runtime_lora(openai_client: TestClient, monkeypatch: pytest.MonkeyPatch):
@@ -435,3 +483,30 @@ def test_runtime_lora_route_404_has_actionable_error(monkeypatch: pytest.MonkeyP
 
     with pytest.raises(AppError, match="VLLM_ALLOW_RUNTIME_LORA_UPDATING=1"):
         vllm_client._post_vllm_runtime("/v1/load_lora_adapter", {"lora_name": "lora:8"})
+
+
+def test_annotation_token_cap_is_conservative_for_base_and_lora(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("VLLM_MAX_MODEL_LEN", "2048")
+    get_settings.cache_clear()
+
+    base_route = vllm_client.InferenceRoute(
+        requested_model_tag="base",
+        effective_model_tag="base",
+        request_model_name="qwen3-vl-8b",
+        base_model_name="qwen3-vl-8b",
+        resolved_project_profile="test_real_stack",
+        route_kind="base",
+    )
+    lora_route = vllm_client.InferenceRoute(
+        requested_model_tag="lora:9",
+        effective_model_tag="lora:9",
+        request_model_name="lora:9",
+        base_model_name="qwen3-vl-8b",
+        resolved_project_profile="test_real_stack",
+        route_kind="lora",
+        adapter_path="models/lora/9",
+        finetune_job_id=9,
+    )
+
+    assert vllm_client._cap_annotation_max_tokens(2048, route=base_route) == 256
+    assert vllm_client._cap_annotation_max_tokens(2048, route=lora_route) == 128
