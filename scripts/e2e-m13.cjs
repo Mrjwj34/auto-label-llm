@@ -26,9 +26,29 @@ const screenshotPath = path.resolve(artifactDir, 'm13-e2e.png');
 const resultPath = path.resolve(artifactDir, 'browser-result.json');
 const APP_BASE_URL = process.env.APP_BASE_URL || 'http://127.0.0.1:5175';
 const API_BASE_URL = process.env.API_BASE_URL || 'http://127.0.0.1:8013';
-const sampleSource = path.resolve(repoRoot, 'output', 'playwright', 'm8', 'sample.png');
 const uploadDir = path.resolve(artifactDir, 'uploads');
 const { chromium } = loadPlaywright(repoRoot);
+
+function resolveSampleSource() {
+  const candidates = [
+    process.env.PLAYWRIGHT_SAMPLE_SOURCE
+      ? path.resolve(process.env.PLAYWRIGHT_SAMPLE_SOURCE)
+      : null,
+    path.resolve(repoRoot, 'output', 'playwright', 'm8', 'sample.png'),
+    path.resolve(repoRoot, 'output', 'tmp-coco8', '000000000009.jpg'),
+    path.resolve(repoRoot, 'output', 'tmp-coco8', '000000000025.jpg'),
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  throw new Error(`Sample image missing. Checked: ${candidates.join(', ')}`);
+}
+
+const sampleSource = resolveSampleSource();
 
 async function api(method, pathname, body) {
   const resp = await fetch(`${API_BASE_URL}${pathname}`, {

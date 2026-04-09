@@ -283,8 +283,9 @@ write_local_vllm_runtime_state() {
   local log_path="$2"
   local supports_enable_lora="$3"
   local env_unset_json="$4"
-  local command_json="$5"
-  local start_timeout="$6"
+  local env_set_json="$5"
+  local command_json="$6"
+  local start_timeout="$7"
   [[ -n "$local_vllm_state_path" ]] || return 0
 
   "$venv_python" - \
@@ -299,6 +300,7 @@ write_local_vllm_runtime_state() {
     "$log_path" \
     "$supports_enable_lora" \
     "$env_unset_json" \
+    "$env_set_json" \
     "$command_json" \
     "$start_timeout" <<'PY'
 from __future__ import annotations
@@ -319,8 +321,9 @@ pid = int(sys.argv[8])
 log_path = str(Path(sys.argv[9]).resolve())
 supports_enable_lora = sys.argv[10] == "1"
 env_unset = json.loads(sys.argv[11])
-command = json.loads(sys.argv[12])
-start_timeout = int(sys.argv[13])
+env_set = json.loads(sys.argv[12])
+command = json.loads(sys.argv[13])
+start_timeout = int(sys.argv[14])
 
 payload = {
     "version": 1,
@@ -335,7 +338,7 @@ payload = {
     "pid": pid,
     "log_path": log_path,
     "env_unset": env_unset,
-    "env_set": {"PYTHONUNBUFFERED": "1"},
+    "env_set": env_set,
     "command": command,
     "start_timeout": start_timeout,
     "supports_enable_lora": supports_enable_lora,
@@ -1941,6 +1944,7 @@ if [[ "$start_local_vllm" -eq 1 ]]; then
   done
   vllm_launch_command+=(
     PYTHONUNBUFFERED=1
+    VLLM_ALLOW_RUNTIME_LORA_UPDATING=1
     "${vllm_command[@]}"
   )
 
@@ -1952,12 +1956,14 @@ if [[ "$start_local_vllm" -eq 1 ]]; then
     die "Local vLLM failed to become healthy."
   }
   env_unset_json="$(json_array_from_words "${vllm_env_unset[@]}")"
+  env_set_json='{"PYTHONUNBUFFERED":"1","VLLM_ALLOW_RUNTIME_LORA_UPDATING":"1"}'
   command_json="$(json_array_from_words "${vllm_command[@]}")"
   write_local_vllm_runtime_state \
     "$vllm_pid" \
     "$managed_log_dir/vllm.log" \
     "$supports_enable_lora" \
     "$env_unset_json" \
+    "$env_set_json" \
     "$command_json" \
     "$vllm_start_timeout"
   log "Local vLLM started with pid $vllm_pid"

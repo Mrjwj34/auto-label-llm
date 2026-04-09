@@ -622,7 +622,18 @@ def _post_vllm_runtime(path: str, payload: dict[str, Any]) -> None:
     try:
         with httpx.Client(timeout=timeout) as client:
             response = client.post(_vllm_api_url(settings.vllm_base_url, path), json=payload, headers=_vllm_headers())
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                if response.status_code == 404 and path in {"/v1/load_lora_adapter", "/v1/unload_lora_adapter"}:
+                    raise AppError(
+                        502,
+                        "vLLM runtime LoRA routes are unavailable. Restart vLLM with "
+                        "--enable-lora and VLLM_ALLOW_RUNTIME_LORA_UPDATING=1.",
+                    ) from exc
+                raise
+    except AppError:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise AppError(502, f"vLLM runtime sync failed: {exc}") from exc
 

@@ -11,9 +11,11 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image as PILImage
 
+from backend.api import AppError
 from backend.app import create_app
 from backend.config import get_settings
 from backend.database import get_engine, get_session_factory
+from backend.services import vllm_client
 from backend.services.vllm_client import _extract_json_text, _normalize_response_payload
 
 
@@ -410,3 +412,26 @@ def test_project_model_activation_can_sync_vllm_runtime_lora(openai_client: Test
     assert any(url.endswith("/v1/load_lora_adapter") for url in urls)
     assert any(url.endswith("/v1/unload_lora_adapter") for url in urls)
 
+
+def test_runtime_lora_route_404_has_actionable_error(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("VLLM_BASE_URL", "http://127.0.0.1:8001")
+    get_settings.cache_clear()
+
+    class Fake404Client:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, url: str, json: dict, headers: dict):
+            return _FakeVLLMResponse({"detail": "Not Found"}, status_code=404)
+
+    monkeypatch.setattr("backend.services.vllm_client.httpx.Client", Fake404Client)
+
+    with pytest.raises(AppError, match="VLLM_ALLOW_RUNTIME_LORA_UPDATING=1"):
+        vllm_client._post_vllm_runtime("/v1/load_lora_adapter", {"lora_name": "lora:8"})
