@@ -12,6 +12,7 @@ from PIL import Image as PILImage
 
 from backend.config import get_settings
 from backend.services import finetune_service
+from backend.services import local_vllm_runtime
 from backend.utils.storage import resolve_path
 
 
@@ -206,6 +207,43 @@ def test_finetune_job_pauses_local_managed_vllm_before_training(client, monkeypa
     assert "Paused local managed vLLM" in log_resp.json()["data"]["log"]
 
 
+def test_finetune_job_restores_local_managed_vllm_after_failure(client, monkeypatch):
+    project_id, _image_id = _create_confirmed_train_annotation(client, task_type="detection")
+
+    monkeypatch.setattr(
+        finetune_service,
+        "stop_local_managed_vllm",
+        lambda: {"status": "stopped", "pid": 2468, "message": "stopped"},
+    )
+    restore_calls: list[bool] = []
+    monkeypatch.setattr(
+        finetune_service,
+        "ensure_local_managed_vllm_started",
+        lambda *, enable_lora, timeout=None: (
+            restore_calls.append(enable_lora) or {"status": "started", "pid": 1357, "message": "started"}
+        ),
+    )
+    monkeypatch.setattr(
+        finetune_service,
+        "_run_mock_training",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    start = client.post("/api/finetune/start", json={"project_id": project_id})
+    assert start.status_code == 200
+    job_id = start.json()["data"]["job_id"]
+
+    final_status = _poll_finetune_job(client, job_id)
+    assert final_status["status"] == "failed"
+    assert restore_calls == [False]
+
+    log_resp = client.get(f"/api/finetune/{job_id}/log")
+    assert log_resp.status_code == 200
+    log_text = log_resp.json()["data"]["log"]
+    assert "Restored local managed vLLM" in log_text
+    assert "ERROR: boom" in log_text
+
+
 def test_finetune_job_can_run_llamafactory_subprocess(client, monkeypatch):
     project_id, _image_id = _create_confirmed_train_annotation(client, task_type="detection")
     mock_cli = (Path(__file__).resolve().parent / "helpers" / "mock_llamafactory_cli.py").resolve()
@@ -316,3 +354,54 @@ def test_generate_lora_config_prefers_trainable_source_on_low_vram(monkeypatch, 
     assert config["quantization_bit"] == 4
     assert config["quantization_type"] == "nf4"
     assert config["double_quantization"] is True
+
+
+def test_prepare_finetune_storage_purges_inactive_serving_cache_when_train_cache_not_ready(tmp_path, monkeypatch):
+    root_dir = tmp_path / "runtime-root"
+    root_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("ROOT_DIR", str(root_dir))
+    hf_home = tmp_path / "hf-home"
+    monkeypatch.setenv("HF_HOME", str(hf_home))
+    get_settings.cache_clear()
+
+    serving_repo = hf_home / "hub" / "models--Qwen--Qwen3-VL-8B-Instruct-FP8"
+    serving_repo.mkdir(parents=True, exist_ok=True)
+    (serving_repo / "weights.bin").write_bytes(b"fp8-cache")
+
+    train_repo = hf_home / "hub" / "models--Qwen--Qwen3-VL-8B-Instruct" / "blobs"
+    train_repo.mkdir(parents=True, exist_ok=True)
+    (train_repo / "part.incomplete").write_bytes(b"partial")
+
+    local_vllm_runtime.write_local_vllm_state(
+        {
+            "version": 1,
+            "managed_by": "scripts/start-linux.sh",
+            "repo_root": root_dir.as_posix(),
+            "cwd": root_dir.as_posix(),
+            "base_url": "http://127.0.0.1:8001",
+            "host": "127.0.0.1",
+            "port": 8001,
+            "model_source": "Qwen/Qwen3-VL-8B-Instruct-FP8",
+            "served_model_name": "qwen3-vl-8b",
+            "pid": None,
+            "log_path": (root_dir / "logs" / "vllm.log").as_posix(),
+            "env_unset": [],
+            "env_set": {"PYTHONUNBUFFERED": "1"},
+            "command": [sys.executable, "-m", "vllm.entrypoints.openai.api_server", "--model", "demo"],
+            "supports_enable_lora": True,
+        },
+        root_dir=root_dir,
+    )
+
+    free_values = iter([2 * finetune_service.GIB, 12 * finetune_service.GIB])
+    monkeypatch.setattr(finetune_service, "_free_disk_bytes", lambda path: next(free_values))
+
+    log_path = root_dir / "logs" / "finetune.log"
+    env_updates = finetune_service._prepare_finetune_storage(
+        {"model_name_or_path": "Qwen/Qwen3-VL-8B-Instruct"},
+        log_path,
+    )
+
+    assert env_updates["HF_HOME"] == hf_home.resolve().as_posix()
+    assert not serving_repo.exists()
+    assert "Removed cached serving base model" in log_path.read_text(encoding="utf-8")

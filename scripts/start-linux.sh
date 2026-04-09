@@ -284,6 +284,7 @@ write_local_vllm_runtime_state() {
   local supports_enable_lora="$3"
   local env_unset_json="$4"
   local command_json="$5"
+  local start_timeout="$6"
   [[ -n "$local_vllm_state_path" ]] || return 0
 
   "$venv_python" - \
@@ -298,7 +299,8 @@ write_local_vllm_runtime_state() {
     "$log_path" \
     "$supports_enable_lora" \
     "$env_unset_json" \
-    "$command_json" <<'PY'
+    "$command_json" \
+    "$start_timeout" <<'PY'
 from __future__ import annotations
 
 import json
@@ -318,6 +320,7 @@ log_path = str(Path(sys.argv[9]).resolve())
 supports_enable_lora = sys.argv[10] == "1"
 env_unset = json.loads(sys.argv[11])
 command = json.loads(sys.argv[12])
+start_timeout = int(sys.argv[13])
 
 payload = {
     "version": 1,
@@ -334,6 +337,7 @@ payload = {
     "env_unset": env_unset,
     "env_set": {"PYTHONUNBUFFERED": "1"},
     "command": command,
+    "start_timeout": start_timeout,
     "supports_enable_lora": supports_enable_lora,
     "started_at": datetime.now(timezone.utc).isoformat(),
 }
@@ -1856,7 +1860,8 @@ if [[ "$start_local_vllm" -eq 1 ]]; then
     "$managed_log_dir/vllm.log" \
     "$supports_enable_lora" \
     "$env_unset_json" \
-    "$command_json"
+    "$command_json" \
+    "$vllm_start_timeout"
   log "Local vLLM started with pid $vllm_pid"
 elif [[ "$annotation_backend" == "openai_compatible" ]]; then
   clear_local_vllm_runtime_state

@@ -23,7 +23,11 @@ from backend.models.annotation import Annotation
 from backend.models.finetune_job import FinetuneJob
 from backend.models.image import Image
 from backend.models.project import Project
-from backend.services.local_vllm_runtime import stop_local_managed_vllm
+from backend.services.local_vllm_runtime import (
+    ensure_local_managed_vllm_started,
+    read_local_vllm_state,
+    stop_local_managed_vllm,
+)
 from backend.services.project_settings import get_project_labels, load_project_settings
 from backend.services.vllm_client import activate_project_model_tag
 from backend.tasks.task_manager import TaskContext, get_task_manager
@@ -38,6 +42,8 @@ PROMPT_TEMPLATES = [
 TRAIN_PROGRESS_START = 25
 TRAIN_PROGRESS_END = 95
 TERMINAL_JOB_STATES = {"done", "failed"}
+GIB = 1024**3
+MIN_DOWNLOAD_FREE_BYTES = 8 * GIB
 
 
 def _settings_paths() -> tuple[Path, Path]:
@@ -47,6 +53,163 @@ def _settings_paths() -> tuple[Path, Path]:
     model_root.mkdir(parents=True, exist_ok=True)
     log_root.mkdir(parents=True, exist_ok=True)
     return model_root, log_root
+
+
+def _resolve_finetune_hf_home() -> Path:
+    configured = get_settings().finetune_hf_home
+    if configured is not None:
+        return Path(configured).resolve()
+
+    env_value = os.getenv("HF_HOME")
+    if env_value:
+        return Path(env_value).resolve()
+
+    workspace_default = Path("/workspace/.hf_home")
+    if workspace_default.exists() or workspace_default.parent.exists():
+        return workspace_default.resolve()
+
+    return (Path.home() / ".cache" / "huggingface").resolve()
+
+
+def _free_disk_bytes(path: Path) -> int:
+    return int(shutil.disk_usage(path).free)
+
+
+def _format_bytes(value: int) -> str:
+    units = ("B", "KiB", "MiB", "GiB", "TiB")
+    size = float(max(0, int(value)))
+    unit = units[0]
+    for candidate in units:
+        unit = candidate
+        if size < 1024.0 or candidate == units[-1]:
+            break
+        size /= 1024.0
+    if unit == "B" or size >= 10:
+        return f"{int(round(size))}{unit}"
+    return f"{size:.1f}{unit}"
+
+
+def _resolve_hf_repo_cache_dir(
+    model_name_or_path: str,
+    *,
+    hf_home: Path,
+    download_dir: Path | None = None,
+) -> Path | None:
+    text = str(model_name_or_path or "").strip()
+    if not text or "/" not in text or text.startswith("/") or "://" in text:
+        return None
+
+    root = download_dir.resolve() if download_dir is not None else (hf_home / "hub").resolve()
+    return (root / f"models--{text.replace('/', '--')}").resolve()
+
+
+def _extract_cli_option(command: list[str] | tuple[str, ...] | None, flag: str) -> str | None:
+    if not command:
+        return None
+    parts = [str(part) for part in command]
+    for index, part in enumerate(parts):
+        if part == flag and index + 1 < len(parts):
+            return parts[index + 1]
+        if part.startswith(f"{flag}="):
+            return part.split("=", 1)[1]
+    return None
+
+
+def _has_incomplete_downloads(path: Path | None) -> bool:
+    if path is None or not path.exists():
+        return False
+    return any(path.rglob("*.incomplete"))
+
+
+def _repo_snapshot_ready(path: Path | None) -> bool:
+    if path is None or not path.exists():
+        return False
+    snapshots = path / "snapshots"
+    if not snapshots.exists():
+        return False
+    if not any(snapshots.iterdir()):
+        return False
+    return not _has_incomplete_downloads(path)
+
+
+def _remove_dir_with_size(path: Path) -> int:
+    if not path.exists():
+        return 0
+    size = sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
+    shutil.rmtree(path, ignore_errors=True)
+    return size
+
+
+def _resolve_serving_cache_repo_dir(*, hf_home: Path) -> Path | None:
+    state = read_local_vllm_state()
+    model_source = ""
+    download_dir: Path | None = None
+
+    if state is not None:
+        model_source = str(state.get("model_source") or "").strip()
+        raw_download_dir = _extract_cli_option(state.get("command"), "--download-dir")
+        if raw_download_dir:
+            download_dir = Path(raw_download_dir).resolve()
+
+    if not model_source:
+        model_source = str(get_settings().vllm_model_source or "").strip()
+
+    return _resolve_hf_repo_cache_dir(model_source, hf_home=hf_home, download_dir=download_dir)
+
+
+def _prepare_finetune_storage(config: dict[str, Any], log_path: Path) -> dict[str, str]:
+    hf_home = _resolve_finetune_hf_home()
+    hf_home.mkdir(parents=True, exist_ok=True)
+    train_repo_dir = _resolve_hf_repo_cache_dir(str(config.get("model_name_or_path") or ""), hf_home=hf_home)
+    serving_repo_dir = _resolve_serving_cache_repo_dir(hf_home=hf_home)
+    free_before = _free_disk_bytes(get_settings().root_dir)
+
+    _append_log(
+        log_path,
+        f"Finetune storage preflight: free={_format_bytes(free_before)}, hf_home={hf_home.as_posix()}",
+    )
+
+    train_ready = _repo_snapshot_ready(train_repo_dir)
+    if (
+        serving_repo_dir is not None
+        and train_repo_dir is not None
+        and serving_repo_dir != train_repo_dir
+        and serving_repo_dir.exists()
+        and not train_ready
+    ):
+        reclaimed = _remove_dir_with_size(serving_repo_dir)
+        _append_log(
+            log_path,
+            "Removed cached serving base model "
+            f"{serving_repo_dir.name} ({_format_bytes(reclaimed)}) to free disk for finetune.",
+        )
+
+    free_after = _free_disk_bytes(get_settings().root_dir)
+    if not train_ready and free_after < MIN_DOWNLOAD_FREE_BYTES:
+        raise RuntimeError(
+            "insufficient free disk for finetune model download/cache "
+            f"(free={_format_bytes(free_after)}, need>={_format_bytes(MIN_DOWNLOAD_FREE_BYTES)})"
+        )
+
+    _append_log(
+        log_path,
+        f"Finetune storage ready: free={_format_bytes(free_after)}, train_cache_ready={str(train_ready).lower()}",
+    )
+    return {"HF_HOME": hf_home.as_posix()}
+
+
+def _restore_local_managed_vllm(log_path: Path) -> None:
+    try:
+        result = ensure_local_managed_vllm_started(enable_lora=False)
+    except Exception as exc:  # noqa: BLE001
+        _append_log(log_path, f"WARNING: Failed to restore local managed vLLM after finetune: {exc}")
+        return
+
+    if result["status"] == "skipped":
+        _append_log(log_path, f"Local managed vLLM restore skipped: {result['message']}")
+        return
+
+    _append_log(log_path, f"Restored local managed vLLM: {result['message']}")
 
 
 def _job_workspace_root(project_id: int, job_id: int) -> Path:
@@ -358,6 +521,7 @@ def run_finetune_job_task(job_id: int, *, ctx: TaskContext | None = None) -> Non
             with GPULock.acquire_training():
                 _append_log(log_path, "GPU training lock acquired.")
                 local_vllm_result = stop_local_managed_vllm()
+                should_restore_local_vllm = local_vllm_result["status"] in {"stopped", "already_stopped"}
                 if local_vllm_result["status"] == "stopped":
                     _append_log(
                         log_path,
@@ -365,11 +529,16 @@ def run_finetune_job_task(job_id: int, *, ctx: TaskContext | None = None) -> Non
                     )
                 elif local_vllm_result["status"] not in {"skipped", "already_stopped"}:
                     _append_log(log_path, f"Local managed vLLM note: {local_vllm_result['message']}")
-                if runner_backend == "llamafactory":
-                    _run_llamafactory_training(job, project, config, log_path, ctx=ctx)
-                else:
-                    _run_mock_training(job, project, config, log_path, ctx=ctx)
-                _append_log(log_path, "GPU training lock released.")
+                try:
+                    finetune_env = _prepare_finetune_storage(config, log_path) if runner_backend == "llamafactory" else {}
+                    if runner_backend == "llamafactory":
+                        _run_llamafactory_training(job, project, config, log_path, ctx=ctx, env_updates=finetune_env)
+                    else:
+                        _run_mock_training(job, project, config, log_path, ctx=ctx)
+                finally:
+                    if should_restore_local_vllm:
+                        _restore_local_managed_vllm(log_path)
+                    _append_log(log_path, "GPU training lock released.")
 
             _assert_finetune_output(output_dir, backend=runner_backend)
             _write_adapter_metadata(
@@ -616,6 +785,7 @@ def _run_llamafactory_training(
     log_path: Path,
     *,
     ctx: TaskContext | None,
+    env_updates: dict[str, str] | None = None,
 ) -> None:
     command = _resolve_llamafactory_command(required=True)
     if command is None:
@@ -628,6 +798,8 @@ def _run_llamafactory_training(
     env["AUTO_LABELING_PROJECT_ID"] = str(project.id)
     env["AUTO_LABELING_OUTPUT_DIR"] = _resolve_path(str(config.get("output_dir") or "")).as_posix()
     env["AUTO_LABELING_DATASET_PATH"] = _resolve_path(str(config.get("dataset_path") or "")).as_posix()
+    for key, value in (env_updates or {}).items():
+        env[str(key)] = str(value)
 
     timeout_seconds = max(0, int(get_settings().finetune_timeout_seconds))
     started = time.monotonic()

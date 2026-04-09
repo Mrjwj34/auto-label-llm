@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     task_worker_concurrency: int = 1
     finetune_backend: Literal["auto", "mock", "llamafactory"] = "auto"
     llamafactory_cli: str = "llamafactory-cli"
+    finetune_hf_home: Path | None = None
     finetune_timeout_seconds: int = 0
     vllm_enable_runtime_lora_update: bool = False
     sam_max_concurrency: int = 1

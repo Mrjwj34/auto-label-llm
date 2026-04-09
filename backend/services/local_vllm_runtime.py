@@ -192,7 +192,10 @@ def ensure_local_managed_vllm_started(
     write_local_vllm_state(state)
 
     try:
-        _wait_for_vllm_ready(str(state.get("base_url") or ""), timeout=timeout)
+        _wait_for_vllm_ready(
+            str(state.get("base_url") or ""),
+            timeout=_resolve_start_timeout(state, timeout=timeout),
+        )
     except Exception:
         try:
             os.kill(process.pid, signal.SIGTERM)
@@ -234,6 +237,21 @@ def _store_stopped_state(state: dict[str, Any]) -> None:
     stored["pid"] = None
     stored["stopped_at"] = _utc_now()
     write_local_vllm_state(stored)
+
+
+def _resolve_start_timeout(state: dict[str, Any], *, timeout: float | None) -> float | None:
+    if timeout is not None:
+        return max(5.0, float(timeout))
+
+    state_timeout = _coerce_positive_float(state.get("start_timeout"))
+    if state_timeout is not None:
+        return max(5.0, state_timeout)
+
+    env_timeout = _coerce_positive_float(os.getenv("VLLM_START_TIMEOUT"))
+    if env_timeout is not None:
+        return max(5.0, env_timeout)
+
+    return None
 
 
 def _extract_pid(state: dict[str, Any] | None) -> int:
@@ -340,3 +358,13 @@ def _normalize_base_url(base_url: str) -> str:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _coerce_positive_float(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except Exception:
+        return None
+    if parsed <= 0:
+        return None
+    return parsed

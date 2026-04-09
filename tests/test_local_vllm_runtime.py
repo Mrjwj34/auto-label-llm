@@ -41,6 +41,7 @@ def _write_state(root_dir: Path, **overrides):
         "env_unset": ["VLLM_BASE_URL"],
         "env_set": {"PYTHONUNBUFFERED": "1"},
         "command": [sys.executable, "-m", "vllm.entrypoints.openai.api_server", "--model", "demo"],
+        "start_timeout": 900,
         "supports_enable_lora": True,
     }
     payload.update(overrides)
@@ -85,6 +86,34 @@ def test_ensure_local_managed_vllm_started_adds_enable_lora_and_updates_state(
     assert stored is not None
     assert stored["pid"] == 4321
     assert "--enable-lora" in stored["command"]
+
+
+def test_ensure_local_managed_vllm_started_uses_state_timeout_when_not_overridden(
+    local_vllm_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _write_state(local_vllm_env, pid=None, start_timeout=901)
+
+    class _FakeProcess:
+        pid = 4321
+
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        local_vllm_runtime.subprocess,
+        "Popen",
+        lambda *args, **kwargs: _FakeProcess(),
+    )
+    monkeypatch.setattr(
+        local_vllm_runtime,
+        "_wait_for_vllm_ready",
+        lambda base_url, *, timeout: seen.setdefault("timeout", timeout),
+    )
+
+    result = local_vllm_runtime.ensure_local_managed_vllm_started(enable_lora=False)
+
+    assert result["status"] == "started"
+    assert seen["timeout"] == 901
 
 
 def test_stop_local_managed_vllm_marks_state_stopped(local_vllm_env: Path, monkeypatch: pytest.MonkeyPatch):
