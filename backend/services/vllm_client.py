@@ -290,7 +290,7 @@ def run_openai_compatible_annotation(
                 "content": [
                     {
                         "type": "text",
-                        "text": build_grounding_prompt(labels=labels, task_type=project.task_type),
+                        "text": _annotation_user_text(labels=labels, task_type=project.task_type, route=route),
                     },
                     {
                         "type": "image_url",
@@ -309,7 +309,7 @@ def run_openai_compatible_annotation(
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    timeout = max(1.0, float(settings.llm_request_timeout_seconds))
+    timeout = _annotation_timeout_seconds(route)
     retries = max(0, int(settings.llm_max_retries))
     last_error: Exception | None = None
 
@@ -380,6 +380,26 @@ def _annotation_chat_template_kwargs(route: InferenceRoute) -> dict[str, Any] | 
     if _route_uses_qwen3_family(route):
         return {"enable_thinking": False}
     return None
+
+
+def _annotation_user_text(*, labels: list[str], task_type: str, route: InferenceRoute) -> str:
+    prompt = build_grounding_prompt(labels=labels, task_type=task_type)
+    if _route_uses_qwen3_family(route):
+        # Qwen3 also supports a prompt-level soft switch; keeping it alongside
+        # chat_template_kwargs makes non-thinking mode more robust across routes.
+        return f"/no_think\n{prompt}"
+    return prompt
+
+
+def _annotation_timeout_seconds(route: InferenceRoute) -> float:
+    settings = get_settings()
+    timeout = max(1.0, float(settings.llm_request_timeout_seconds))
+    if route.route_kind == "lora":
+        # Runtime LoRA on the 8B FP8 vision model is substantially slower than
+        # the base route on 16GB cards; keep the task alive long enough for the
+        # adapter request to finish instead of failing at the base-route timeout.
+        return max(timeout, 600.0)
+    return timeout
 
 
 def _route_uses_qwen3_family(route: InferenceRoute) -> bool:

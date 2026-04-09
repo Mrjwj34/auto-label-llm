@@ -230,6 +230,7 @@ def test_openai_annotation_uses_profile_resolved_model_and_records_inference_met
     assert request_payload["model"] == "qwen3-vl-8b"
     assert request_payload["guided_json"]["required"] == ["objects"]
     assert request_payload["chat_template_kwargs"] == {"enable_thinking": False}
+    assert request_payload["messages"][1]["content"][0]["text"].startswith("/no_think\n")
 
     annotations = openai_client.get(f"/api/images/{image_id}/annotations")
     assert annotations.status_code == 200
@@ -408,6 +409,7 @@ def test_project_model_activation_switches_base_and_lora_and_evaluation_uses_act
     assert len(FakeVLLMClient.requests) == 1
     assert FakeVLLMClient.requests[0]["json"]["model"] == f"lora:{job_id}"
     assert FakeVLLMClient.requests[0]["json"]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert FakeVLLMClient.requests[0]["json"]["messages"][1]["content"][0]["text"].startswith("/no_think\n")
 
     report = openai_client.get(f"/api/evaluations/{run_id}/report")
     assert report.status_code == 200
@@ -536,3 +538,36 @@ def test_annotation_chat_template_kwargs_disable_qwen3_thinking():
 
     assert vllm_client._annotation_chat_template_kwargs(qwen3_route) == {"enable_thinking": False}
     assert vllm_client._annotation_chat_template_kwargs(non_qwen_route) is None
+    assert vllm_client._annotation_user_text(labels=["crack"], task_type="detection", route=qwen3_route).startswith(
+        "/no_think\n"
+    )
+    assert not vllm_client._annotation_user_text(
+        labels=["crack"], task_type="detection", route=non_qwen_route
+    ).startswith("/no_think\n")
+
+
+def test_annotation_timeout_extends_lora_route(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("LLM_REQUEST_TIMEOUT_SECONDS", "180")
+    get_settings.cache_clear()
+
+    base_route = vllm_client.InferenceRoute(
+        requested_model_tag="base",
+        effective_model_tag="base",
+        request_model_name="qwen3-vl-8b",
+        base_model_name="qwen3-vl-8b",
+        resolved_project_profile="test_real_stack",
+        route_kind="base",
+    )
+    lora_route = vllm_client.InferenceRoute(
+        requested_model_tag="lora:10",
+        effective_model_tag="lora:10",
+        request_model_name="lora:10",
+        base_model_name="qwen3-vl-8b",
+        resolved_project_profile="test_real_stack",
+        route_kind="lora",
+        adapter_path="models/lora/10",
+        finetune_job_id=10,
+    )
+
+    assert vllm_client._annotation_timeout_seconds(base_route) == 180.0
+    assert vllm_client._annotation_timeout_seconds(lora_route) == 600.0
