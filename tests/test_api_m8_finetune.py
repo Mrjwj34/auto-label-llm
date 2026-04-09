@@ -296,6 +296,9 @@ def test_generate_lora_config_prefers_trainable_source_on_low_vram(monkeypatch, 
     get_settings.cache_clear()
     monkeypatch.setattr(finetune_service, "detect_vram_gb", lambda: 16.6)
 
+    system_patch = client.patch("/api/system/settings", json={"llm": {"base_model": "qwen3-vl-8b"}})
+    assert system_patch.status_code == 200
+
     project = client.post("/api/projects", json={"name": "cfg-project", "task_type": "detection"})
     assert project.status_code == 200
     project_id = project.json()["data"]["id"]
