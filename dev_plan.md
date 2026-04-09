@@ -72,8 +72,11 @@
 | M14 | 真实 LoRA 微调闭环 | LLaMA-Factory 真训练 + LoRA 激活后真正参与推理 | 🟡 | - |
 | M15 | 评估系统增强与对比看板 | mask 指标、run 对比、失败案例分析、性能统计 | ✅ | - |
 | M16 | 一键启动与演示脚本 | 一条命令启动所有服务与外部依赖 | ✅ | - |
+| M17 | SAM3 → SAM2 迁移 | 分割链路切到更贴近当前需求的 SAM2 官方路线 | ⬜ | - |
+| M18 | OCI 分发与环境自检 | Docker Hub 固定镜像 + Compose + 模型缓存 + doctor/selftest | ⬜ | - |
+| M19 | 前端完全重构 | 以正式产品形态重做前端架构、交互与视觉体系 | ⬜ | - |
 
-> 说明：原 M10 “一键启动与演示脚本”顺延为 M16。M10～M15 用于补齐当前实现与 `design_doc.md` 之间的差距，目标是最终与设计文档一致。
+> 说明：原 M10 “一键启动与演示脚本”顺延为 M16。M10～M15 用于补齐当前实现与 `design_doc.md` 之间的差距，目标是最终与设计文档一致。M17～M19 为下一阶段主计划，分别收敛模型选型、分发方式与前端产品化。
 
 ---
 
@@ -354,6 +357,92 @@
 
 **验收**
 - 从空 Linux 环境到可演示：按 README 走一遍不踩坑（或明确每个依赖缺失时的提示与替代方案）。
+
+---
+
+### M17 — SAM3 → SAM2 迁移
+
+**范围**
+- 将当前分割链路的真实后端从 `SAM3` 调整为 `SAM2` 官方路线，优先匹配本项目实际需要的“bbox 出 mask + 点选修正”能力边界。
+- 保持前后端交互契约稳定：`sam.checkpoint` / `sam.device` / `sam.multimask_output` 仍保留，避免把模型替换扩散成全仓重构。
+- 收敛当前 `SAM3_ALLOW_HF_DOWNLOAD`、`SAM3_CHECKPOINT_PATH`、`models/sam3/` 等约定，迁移为更通用的 `SAM_*` 语义，或在过渡期同时兼容 `sam2` / `sam3`。
+- 更新默认 profile、README、设计文档与测试样例，使“真实分割基线”从 `SAM3` 切换为 `SAM2`。
+
+**实现清单**
+- 重写 `backend/services/sam_service.py` 的真实 runtime 适配层，优先基于 `SAM2` 官方 image predictor 实现。
+- 统一 checkpoint 发现、下载、缓存与 provider 标识，避免业务层继续写死 `sam3:*`。
+- 清理 `scripts/start-linux.sh`、`README.md`、测试与配置中的 `SAM3` 强绑定表述。
+- 保留 stub 回退与低算力开发路径，确保 `dev_low_resource` 仍稳定可跑。
+
+**验收**
+- 分割项目的自动标注、手动补框、点选纠错、导入导出与评估链路在 `SAM2` 下全部跑通。
+- 与当前实现相比，不要求自然语言分割增强，但不得牺牲现有交互式修正能力。
+- 文档、默认配置、日志 provider 与错误提示不再把 `SAM3` 作为唯一真实后端。
+
+**验证步骤**
+- 单测：`SAMService` 真实/降级路径、checkpoint 发现、点选修正与 provider 标识。
+- 集成测试：自动标注、图片详情页点修正、导入导出、评估链路。
+- 真实联调：在 `test_real_stack` 上完成一次 `SAM2` 真实权重下载、启动与交互式纠错验收。
+
+**完成后的 git 操作**
+- `git commit -m "refactor: migrate segmentation runtime from sam3 to sam2"`
+
+---
+
+### M18 — OCI 分发与环境自检
+
+**范围**
+- 将当前“本机脚本现场安装依赖”的分发方式，调整为 `Docker Hub 固定版本镜像 + docker compose + 模型缓存目录 + doctor/selftest`。
+- 前端保留为独立服务，正式部署拓扑固定为 `frontend + api + worker + vllm + redis`。
+- 宿主机首发支持矩阵锁定为 `Ubuntu 22.04 x86_64 + NVIDIA 驱动 + Docker + Compose + NVIDIA Container Toolkit`。
+- 默认模型下载策略改为“优先无 token 来源，失败后再要求 `HF_TOKEN` 并切回官方仓库”。
+
+**实现清单**
+- 落地 `docs/oci_distribution_plan.md` 中定义的镜像、Compose、缓存目录与命令约定。
+- 设计并实现 `doctor`、`doctor --fix`、`start`、`stop`、`status`、`logs`、`selftest` 命令。
+- 统一宿主机挂载目录：`data/`、`logs/`、`models/`、`hf_cache/`、`lora/`。
+- 发布 Docker Hub 版本化镜像，并在文档中给出 tag / digest、支持矩阵与回滚方式。
+
+**验收**
+- 在一台干净的 Ubuntu 22.04 GPU 机器上，不预装 `vllm` / `torch` / `sam` / `llamafactory`，仅通过 Docker 相关前置即可拉起完整系统。
+- `doctor` 能准确识别缺失项，并自动补齐或输出可执行的手工修复命令。
+- `selftest` 能明确报告 `frontend/api/vllm/redis` 的健康状态，并完成一次最小真实推理验证。
+
+**验证步骤**
+- 本地语法与配置校验：Compose、启动脚本、镜像构建脚本。
+- 新机器冷启动验收：从零开始执行 `doctor` → `start` → `selftest`。
+- 回归验证：模型缓存复用、日志位置、显存档位推荐、token 回退逻辑。
+
+**完成后的 git 操作**
+- `git commit -m "feat: ship OCI distribution flow with compose and self-checks"`
+
+---
+
+### M19 — 前端完全重构
+
+**范围**
+- 以前端正式产品形态为目标，重做信息架构、关键工作流、状态管理和视觉体系，而不是在当前简略界面上持续打补丁。
+- 保留现有业务能力闭环：项目管理、图片列表、自动标注、人工修正、微调、评估、系统设置与任务状态。
+- 将“开发期占位式界面”替换为正式可演示、可扩展的前端服务，兼顾后续继续增长的功能复杂度。
+
+**实现清单**
+- 重做页面架构与路由层：项目页、图片工作台、训练/评估面板、系统设置、任务监控。
+- 重做状态管理与数据流，减少当前页面局部状态堆叠和跨模块耦合。
+- 重构标注工作台交互，包括检测/分割的查看、纠错、确认与来源展示。
+- 补齐更系统的前端测试：核心页面回归、关键交互流程、配置与任务状态展示。
+
+**验收**
+- 在不牺牲现有功能的前提下，前端完成一次真正的结构性替换，而不是局部修修补补。
+- 关键工作流可连续演示：上传/导入 → 自动标注 → 人工修正 → 微调/评估 → 查看结果与配置。
+- 新界面具备独立服务化部署能力，能直接纳入 M18 的 OCI 分发体系。
+
+**验证步骤**
+- 前端构建通过，核心页面浏览器回归通过。
+- 至少完成一轮真实端到端演示录屏或验收截图，覆盖标注、修正、训练、评估与设置。
+- 与旧界面相比，明确列出被替换的结构问题与新的维护边界。
+
+**完成后的 git 操作**
+- `git commit -m "feat: rebuild frontend architecture and annotation workspace"`
 
 ---
 

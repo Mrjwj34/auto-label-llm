@@ -4,6 +4,7 @@
 
 - 技术路线与目标见 `design_doc.md`
 - 可执行的开发计划与进度见 `dev_plan.md`
+- 后续 OCI / Compose 分发基线见 `docs/oci_distribution_plan.md`
 
 ## 快速开始（Linux 主路径）
 

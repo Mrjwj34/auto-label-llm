@@ -19,6 +19,7 @@ dist/
 /models/
 /logs/
 /.cache/
+/output/
 /output/playwright/
 configs/app.local.yaml
 .env
