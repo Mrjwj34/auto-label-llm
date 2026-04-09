@@ -175,7 +175,7 @@ POST /api/projects/{id}/evaluate
 - 分割项目现在会真实生成二值 `mask PNG` 并同步产出 polygon，`mask_path` 会落盘到 `data/projects/{project_id}/masks/`
 - 默认开发档仍然优先走低算力友好的 `stub`，但 stub 已升级为“先生成真实 mask，再统一后处理/落盘”，因此本地联调、接口测试、浏览器纠错测试都能覆盖真实数据流
 - 项目默认 `sam.checkpoint` 已切到 `sam3` / `sam3.1` symbolic alias；`test_real_stack` / `demo_prod` 默认使用 `sam3.1`
-- `bash scripts/start-linux.sh --profile test_real_stack --with-sam3 ...` 或 `demo_prod` 路径下，如果 `models/sam3/` 里还没有可用 checkpoint，脚本现在会自动补齐对应的 `sam3.1` 权重，避免真实联调时静默回退到 stub
+- `bash scripts/start-linux.sh --profile test_real_stack --with-sam3 ...` 或 `demo_prod` 路径下，如果 `models/sam3/` 里还没有可用 checkpoint，脚本会优先尝试自动补齐对应的 `sam3.1` 权重；若当前机器没有 Hugging Face 登录态或未获 `facebook/sam3.1` 访问权限，会直接报清楚，不再静默回退到 stub
 - 其他启动方式下，真实 SAM3 仍然按“显式开启”处理：
   - 提供本地 `.pt` checkpoint 路径给 `sam.checkpoint`
   - 或在明确接受下载模型时设置 `SAM3_ALLOW_HF_DOWNLOAD=1`

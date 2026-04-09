@@ -492,6 +492,22 @@ print(selected.resolve())
 PY
 }
 
+has_hf_hub_auth() {
+  if [[ -n "${HF_TOKEN:-}" || -n "${HUGGING_FACE_HUB_TOKEN:-}" ]]; then
+    return 0
+  fi
+  if [[ -n "${HF_HOME:-}" && -f "${HF_HOME%/}/token" ]]; then
+    return 0
+  fi
+  if [[ -f "${HOME}/.cache/huggingface/token" ]]; then
+    return 0
+  fi
+  if [[ -f "${HOME}/.huggingface/token" ]]; then
+    return 0
+  fi
+  return 1
+}
+
 emit_local_vllm_progress() {
   local model_source="${1:-}"
   local repo_cache_dir=""
@@ -1661,6 +1677,9 @@ fi
 write_profile_envs
 
 if [[ "$download_sam3_checkpoint" -eq 1 ]]; then
+  if ! has_hf_hub_auth; then
+    die "Downloading SAM3 checkpoints requires Hugging Face access to facebook/$sam3_version. Set HF_TOKEN (or HUGGING_FACE_HUB_TOKEN), run '$venv_dir/bin/hf auth login', or place a local .pt checkpoint under $repo_root/models/sam3."
+  fi
   run_logged_step \
     "Downloading SAM3 checkpoint family: $sam3_version" \
     "$setup_log_dir/download-sam3.log" \
@@ -1677,7 +1696,17 @@ repo_root = Path(sys.argv[1]).resolve()
 version = sys.argv[2]
 destination_dir = repo_root / "models" / "sam3"
 destination_dir.mkdir(parents=True, exist_ok=True)
-source_path = Path(download_ckpt_from_hf(version=version)).resolve()
+try:
+    source_path = Path(download_ckpt_from_hf(version=version)).resolve()
+except Exception as exc:  # noqa: BLE001
+    message = str(exc)
+    if "GatedRepoError" in type(exc).__name__ or "Cannot access gated repo" in message or "401 Client Error" in message:
+        raise SystemExit(
+            "SAM3 checkpoint download requires authenticated Hugging Face access to "
+            f"facebook/{version}. Run '.venv/bin/hf auth login', set HF_TOKEN, or "
+            f"place a local checkpoint under {destination_dir}."
+        )
+    raise
 destination_path = destination_dir / source_path.name
 if source_path != destination_path.resolve():
     shutil.copy2(source_path, destination_path)
