@@ -296,6 +296,7 @@ const imageSortMode = ref<ImageSortMode>('newest')
 const splitUpdatingId = ref<number | null>(null)
 const systemConfig = ref<SystemConfig | null>(null)
 const systemLoading = ref(false)
+const canSaveRuntimeSettings = computed(() => !settingsSaving.value && !systemLoading.value && systemConfig.value !== null)
 const profileActivating = ref('')
 const systemMessage = ref('')
 const viteProfile = String(import.meta.env.VITE_APP_PROFILE ?? 'unknown')
@@ -726,6 +727,11 @@ async function patchProjectSettings(patch: Record<string, unknown>) {
 }
 
 async function saveRuntimeSettings() {
+  if (!canSaveRuntimeSettings.value) {
+    error.value = 'System runtime settings are still loading. Please wait a moment and try again.'
+    return
+  }
+
   error.value = ''
   settingsMessage.value = ''
   settingsChange.value = null
@@ -1498,7 +1504,7 @@ watch(evaluationBaselineRunId, () => {
           class="btn primary"
           data-testid="project-settings-save-btn"
           type="button"
-          :disabled="settingsSaving"
+          :disabled="!canSaveRuntimeSettings"
           @click="saveRuntimeSettings"
         >
           {{ settingsSaving ? 'Saving...' : 'Save System Runtime Settings' }}
