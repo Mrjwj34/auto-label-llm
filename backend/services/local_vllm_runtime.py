@@ -195,6 +195,7 @@ def ensure_local_managed_vllm_started(
         _wait_for_vllm_ready(
             str(state.get("base_url") or ""),
             timeout=_resolve_start_timeout(state, timeout=timeout),
+            pid=process.pid,
         )
     except Exception:
         try:
@@ -283,11 +284,13 @@ def _is_expected_vllm_pid(pid: int) -> bool:
     return True
 
 
-def _wait_for_vllm_ready(base_url: str, *, timeout: float | None) -> None:
+def _wait_for_vllm_ready(base_url: str, *, timeout: float | None, pid: int | None = None) -> None:
     deadline = time.monotonic() + max(5.0, float(timeout or 300.0))
     probe_urls = _probe_urls(base_url)
     last_error: Exception | None = None
     while time.monotonic() < deadline:
+        if pid is not None and pid > 0 and not _is_expected_vllm_pid(pid):
+            raise RuntimeError(f"Local managed vLLM exited before becoming healthy (pid={pid}).")
         try:
             with httpx.Client(timeout=5.0) as client:
                 for url in probe_urls:

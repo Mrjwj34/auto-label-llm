@@ -107,13 +107,44 @@ def test_ensure_local_managed_vllm_started_uses_state_timeout_when_not_overridde
     monkeypatch.setattr(
         local_vllm_runtime,
         "_wait_for_vllm_ready",
-        lambda base_url, *, timeout: seen.setdefault("timeout", timeout),
+        lambda base_url, *, timeout, pid=None: seen.setdefault("timeout", timeout),
     )
 
     result = local_vllm_runtime.ensure_local_managed_vllm_started(enable_lora=False)
 
     assert result["status"] == "started"
     assert seen["timeout"] == 901
+
+
+def test_ensure_local_managed_vllm_started_fails_fast_when_process_exits_before_healthy(
+    local_vllm_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _write_state(local_vllm_env, pid=None)
+
+    class _FakeProcess:
+        pid = 4321
+
+    class _FailingClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url):  # noqa: ANN001
+            raise RuntimeError(f"connection refused for {url}")
+
+    monkeypatch.setattr(local_vllm_runtime.subprocess, "Popen", lambda *args, **kwargs: _FakeProcess())
+    monkeypatch.setattr(local_vllm_runtime.httpx, "Client", lambda timeout=5.0: _FailingClient())
+    monkeypatch.setattr(local_vllm_runtime, "_is_expected_vllm_pid", lambda pid: False)
+
+    with pytest.raises(RuntimeError, match="exited before becoming healthy"):
+        local_vllm_runtime.ensure_local_managed_vllm_started(enable_lora=False, timeout=5)
+
+    stored = local_vllm_runtime.read_local_vllm_state(local_vllm_env)
+    assert stored is not None
+    assert stored["pid"] is None
 
 
 def test_stop_local_managed_vllm_marks_state_stopped(local_vllm_env: Path, monkeypatch: pytest.MonkeyPatch):

@@ -244,6 +244,64 @@ def test_finetune_job_restores_local_managed_vllm_after_failure(client, monkeypa
     assert "ERROR: boom" in log_text
 
 
+def test_restore_local_managed_vllm_reclaims_training_cache_for_serving_restart(tmp_path, monkeypatch):
+    root_dir = tmp_path / "runtime-root"
+    root_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("ROOT_DIR", str(root_dir))
+    hf_home = tmp_path / "hf-home"
+    monkeypatch.setenv("HF_HOME", str(hf_home))
+    get_settings.cache_clear()
+
+    train_repo = hf_home / "hub" / "models--Qwen--Qwen3-VL-8B-Instruct"
+    train_repo.mkdir(parents=True, exist_ok=True)
+    (train_repo / "weights.bin").write_bytes(b"train-cache")
+
+    local_vllm_runtime.write_local_vllm_state(
+        {
+            "version": 1,
+            "managed_by": "scripts/start-linux.sh",
+            "repo_root": root_dir.as_posix(),
+            "cwd": root_dir.as_posix(),
+            "base_url": "http://127.0.0.1:8001",
+            "host": "127.0.0.1",
+            "port": 8001,
+            "model_source": "Qwen/Qwen3-VL-8B-Instruct-FP8",
+            "served_model_name": "qwen3-vl-8b",
+            "pid": None,
+            "log_path": (root_dir / "logs" / "vllm.log").as_posix(),
+            "env_unset": [],
+            "env_set": {"PYTHONUNBUFFERED": "1"},
+            "command": [sys.executable, "-m", "vllm.entrypoints.openai.api_server", "--model", "demo"],
+            "supports_enable_lora": True,
+        },
+        root_dir=root_dir,
+    )
+
+    restore_calls: list[bool] = []
+    monkeypatch.setattr(
+        finetune_service,
+        "ensure_local_managed_vllm_started",
+        lambda *, enable_lora, timeout=None: (
+            restore_calls.append(enable_lora) or {"status": "started", "pid": 1357, "message": "started"}
+        ),
+    )
+    free_values = iter([2 * finetune_service.GIB, 12 * finetune_service.GIB])
+    monkeypatch.setattr(finetune_service, "_free_disk_bytes", lambda path: next(free_values))
+
+    log_path = root_dir / "logs" / "finetune.log"
+    finetune_service._restore_local_managed_vllm(
+        {"model_name_or_path": "Qwen/Qwen3-VL-8B-Instruct"},
+        log_path,
+    )
+
+    assert restore_calls == [False]
+    assert not train_repo.exists()
+
+    log_text = log_path.read_text(encoding="utf-8")
+    assert "Removed cached finetune training base model" in log_text
+    assert "Restored local managed vLLM" in log_text
+
+
 def test_finetune_job_can_run_llamafactory_subprocess(client, monkeypatch):
     project_id, _image_id = _create_confirmed_train_annotation(client, task_type="detection")
     mock_cli = (Path(__file__).resolve().parent / "helpers" / "mock_llamafactory_cli.py").resolve()

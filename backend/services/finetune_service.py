@@ -198,7 +198,54 @@ def _prepare_finetune_storage(config: dict[str, Any], log_path: Path) -> dict[st
     return {"HF_HOME": hf_home.as_posix()}
 
 
-def _restore_local_managed_vllm(log_path: Path) -> None:
+def _prepare_local_vllm_restore_storage(config: dict[str, Any], log_path: Path) -> bool:
+    hf_home = _resolve_finetune_hf_home()
+    hf_home.mkdir(parents=True, exist_ok=True)
+    serving_repo_dir = _resolve_serving_cache_repo_dir(hf_home=hf_home)
+    if serving_repo_dir is None:
+        return True
+
+    train_repo_dir = _resolve_hf_repo_cache_dir(str(config.get("model_name_or_path") or ""), hf_home=hf_home)
+    serving_ready = _repo_snapshot_ready(serving_repo_dir)
+    free_before = _free_disk_bytes(get_settings().root_dir)
+
+    _append_log(
+        log_path,
+        "Local managed vLLM restore preflight: "
+        f"free={_format_bytes(free_before)}, serving_cache_ready={str(serving_ready).lower()}",
+    )
+
+    if (
+        not serving_ready
+        and free_before < MIN_DOWNLOAD_FREE_BYTES
+        and train_repo_dir is not None
+        and train_repo_dir != serving_repo_dir
+        and train_repo_dir.exists()
+    ):
+        reclaimed = _remove_dir_with_size(train_repo_dir)
+        _append_log(
+            log_path,
+            "Removed cached finetune training base model "
+            f"{train_repo_dir.name} ({_format_bytes(reclaimed)}) to free disk for local managed vLLM restore.",
+        )
+
+    free_after = _free_disk_bytes(get_settings().root_dir)
+    if not serving_ready and free_after < MIN_DOWNLOAD_FREE_BYTES:
+        _append_log(
+            log_path,
+            "WARNING: Skipping local managed vLLM restore after finetune because free disk is insufficient "
+            f"for serving model download/cache (free={_format_bytes(free_after)}, "
+            f"need>={_format_bytes(MIN_DOWNLOAD_FREE_BYTES)}).",
+        )
+        return False
+
+    return True
+
+
+def _restore_local_managed_vllm(config: dict[str, Any], log_path: Path) -> None:
+    if not _prepare_local_vllm_restore_storage(config, log_path):
+        return
+
     try:
         result = ensure_local_managed_vllm_started(enable_lora=False)
     except Exception as exc:  # noqa: BLE001
@@ -537,7 +584,7 @@ def run_finetune_job_task(job_id: int, *, ctx: TaskContext | None = None) -> Non
                         _run_mock_training(job, project, config, log_path, ctx=ctx)
                 finally:
                     if should_restore_local_vllm:
-                        _restore_local_managed_vllm(log_path)
+                        _restore_local_managed_vllm(config, log_path)
                     _append_log(log_path, "GPU training lock released.")
 
             _assert_finetune_output(output_dir, backend=runner_backend)

@@ -10,7 +10,7 @@
     "VLLM_GPU_MEMORY_UTILIZATION": "0.88",
     "VLLM_MAX_NUM_SEQS": "1",
     "LLM_REQUEST_TIMEOUT_SECONDS": "240",
-    "LLM_MAX_RETRIES": "0",
+    "LLM_MAX_RETRIES": "1",
     "LLM_MAX_TOKENS": "3072",
     "CORS_ALLOW_ORIGINS": "[\"http://localhost:5173\", \"http://127.0.0.1:5173\"]"
   },

@@ -12,7 +12,7 @@
     "VLLM_MAX_NUM_BATCHED_TOKENS": "1024",
     "VLLM_CPU_OFFLOAD_GB": "8",
     "LLM_REQUEST_TIMEOUT_SECONDS": "180",
-    "LLM_MAX_RETRIES": "0",
+    "LLM_MAX_RETRIES": "1",
     "LLM_MAX_TOKENS": "1024",
     "CORS_ALLOW_ORIGINS": "[\"http://localhost:5173\", \"http://127.0.0.1:5173\"]"
   },
