@@ -87,21 +87,30 @@ def run_image_annotation_task(ctx: TaskContext, payload: dict) -> None:
         task_db.add(img)
         task_db.commit()
 
-    with session_factory() as task_db:
-        img = task_db.get(Image, image_id)
-        if img is None:
-            raise RuntimeError("image not found")
-        task_project = task_db.get(Project, img.project_id)
-        if task_project is None:
-            raise RuntimeError("project not found")
+    try:
+        with session_factory() as task_db:
+            img = task_db.get(Image, image_id)
+            if img is None:
+                raise RuntimeError("image not found")
+            task_project = task_db.get(Project, img.project_id)
+            if task_project is None:
+                raise RuntimeError("project not found")
 
-        ctx.set_progress(40, "generating bbox")
-        result = generate_auto_annotations(task_project, img, db=task_db)
-        replace_auto_annotations(task_db, img, result)
-        img.status = "done"
-        task_db.add(img)
-        task_db.commit()
-        ctx.set_progress(95, f"generated {len(result.annotations)} boxes via {result.runtime_label()}")
+            ctx.set_progress(40, "generating bbox")
+            result = generate_auto_annotations(task_project, img, db=task_db)
+            replace_auto_annotations(task_db, img, result)
+            img.status = "done"
+            task_db.add(img)
+            task_db.commit()
+            ctx.set_progress(95, f"generated {len(result.annotations)} boxes via {result.runtime_label()}")
+    except Exception:
+        with session_factory() as task_db:
+            img = task_db.get(Image, image_id)
+            if img is not None:
+                img.status = "error"
+                task_db.add(img)
+                task_db.commit()
+        raise
 
 
 def resolve_project_image_ids(*, project_id: int, image_ids: list[int] | None, only_pending: bool) -> list[int]:
