@@ -5,6 +5,8 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 
 from backend.config import get_settings
+from backend.database import get_session_factory
+from backend.models.image import Image
 from backend.tasks.task_manager import TERMINAL_TASK_STATES, TaskContext, TaskEnvelope, get_task_manager
 
 
@@ -58,4 +60,22 @@ class RedisTaskWorker:
             if final_state.status not in TERMINAL_TASK_STATES:
                 self._manager.mark_success(envelope.task_id, message=final_state.message or "completed")
         except Exception as exc:  # noqa: BLE001
+            self._mark_task_failure_side_effects(envelope)
             self._manager.mark_failure(envelope.task_id, message=str(exc))
+
+    def _mark_task_failure_side_effects(self, envelope: TaskEnvelope) -> None:
+        if envelope.kind != "image_annotate":
+            return
+
+        image_id = int(envelope.payload.get("image_id") or 0)
+        if image_id <= 0:
+            return
+
+        session_factory = get_session_factory()
+        with session_factory() as db:
+            image = db.get(Image, image_id)
+            if image is None:
+                return
+            image.status = "error"
+            db.add(image)
+            db.commit()
