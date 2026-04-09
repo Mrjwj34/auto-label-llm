@@ -182,7 +182,7 @@ Environment overrides:
   PYTHON_BIN                 Preferred Python executable
   TORCH_PIP_SPEC             Torch packages. Default: "torch torchvision"
   TORCH_EXTRA_INDEX_URL      Torch wheel index. Default: https://download.pytorch.org/whl/cu126
-  SAM3_PIP_SPEC              SAM3 packages. Default: "git+https://github.com/facebookresearch/sam3.git huggingface_hub"
+  SAM3_PIP_SPEC              SAM3 packages. Default: "git+https://github.com/facebookresearch/sam3.git huggingface_hub pycocotools"
   VLLM_PIP_SPEC              vLLM packages. Default: "vllm"
   LLAMAFACTORY_PIP_SPEC      LLaMA-Factory packages. Default: "llamafactory bitsandbytes"
   VLLM_MAX_MODEL_LEN         Optional vLLM max context length override
@@ -1508,7 +1508,7 @@ elif [[ "$with_vllm" == "yes" ]]; then
 fi
 
 if [[ "$with_sam3" == "yes" ]]; then
-  read -r -a sam3_packages <<<"${SAM3_PIP_SPEC:-git+https://github.com/facebookresearch/sam3.git huggingface_hub}"
+  read -r -a sam3_packages <<<"${SAM3_PIP_SPEC:-git+https://github.com/facebookresearch/sam3.git huggingface_hub pycocotools}"
   sam3_fingerprint="$(
     compute_fingerprint \
       "$venv_python" \
