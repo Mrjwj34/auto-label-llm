@@ -229,6 +229,7 @@ def test_openai_annotation_uses_profile_resolved_model_and_records_inference_met
     request_payload = FakeVLLMClient.requests[0]["json"]
     assert request_payload["model"] == "qwen3-vl-8b"
     assert request_payload["guided_json"]["required"] == ["objects"]
+    assert request_payload["chat_template_kwargs"] == {"enable_thinking": False}
 
     annotations = openai_client.get(f"/api/images/{image_id}/annotations")
     assert annotations.status_code == 200
@@ -406,6 +407,7 @@ def test_project_model_activation_switches_base_and_lora_and_evaluation_uses_act
 
     assert len(FakeVLLMClient.requests) == 1
     assert FakeVLLMClient.requests[0]["json"]["model"] == f"lora:{job_id}"
+    assert FakeVLLMClient.requests[0]["json"]["chat_template_kwargs"] == {"enable_thinking": False}
 
     report = openai_client.get(f"/api/evaluations/{run_id}/report")
     assert report.status_code == 200
@@ -510,3 +512,27 @@ def test_annotation_token_cap_is_conservative_for_base_and_lora(monkeypatch: pyt
 
     assert vllm_client._cap_annotation_max_tokens(2048, route=base_route) == 256
     assert vllm_client._cap_annotation_max_tokens(2048, route=lora_route) == 128
+
+
+def test_annotation_chat_template_kwargs_disable_qwen3_thinking():
+    qwen3_route = vllm_client.InferenceRoute(
+        requested_model_tag="lora:10",
+        effective_model_tag="lora:10",
+        request_model_name="lora:10",
+        base_model_name="qwen3-vl-8b",
+        resolved_project_profile="test_real_stack",
+        route_kind="lora",
+        adapter_path="models/lora/10",
+        finetune_job_id=10,
+    )
+    non_qwen_route = vllm_client.InferenceRoute(
+        requested_model_tag="base",
+        effective_model_tag="base",
+        request_model_name="internvl",
+        base_model_name="internvl",
+        resolved_project_profile="fixed",
+        route_kind="base",
+    )
+
+    assert vllm_client._annotation_chat_template_kwargs(qwen3_route) == {"enable_thinking": False}
+    assert vllm_client._annotation_chat_template_kwargs(non_qwen_route) is None

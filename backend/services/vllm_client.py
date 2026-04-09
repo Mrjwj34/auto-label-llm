@@ -300,6 +300,9 @@ def run_openai_compatible_annotation(
             },
         ],
     }
+    chat_template_kwargs = _annotation_chat_template_kwargs(route)
+    if chat_template_kwargs is not None:
+        payload["chat_template_kwargs"] = chat_template_kwargs
 
     headers = {"Content-Type": "application/json"}
     api_key = settings.vllm_api_key.strip()
@@ -368,6 +371,28 @@ def _resolve_job_base_model(job: FinetuneJob) -> str | None:
     payload = _load_json_dict(adapter_config.read_text(encoding="utf-8")) if adapter_config.exists() else {}
     text = str(payload.get("base_model") or "").strip()
     return text or None
+
+
+def _annotation_chat_template_kwargs(route: InferenceRoute) -> dict[str, Any] | None:
+    # Qwen3 family defaults to thinking mode unless it is explicitly disabled.
+    # For annotation JSON, long reasoning traces only add latency and can cause
+    # LoRA routes to time out before returning a usable response.
+    if _route_uses_qwen3_family(route):
+        return {"enable_thinking": False}
+    return None
+
+
+def _route_uses_qwen3_family(route: InferenceRoute) -> bool:
+    for candidate in (
+        route.request_model_name,
+        route.base_model_name,
+        route.effective_model_tag,
+        route.requested_model_tag,
+    ):
+        text = str(candidate or "").strip().lower()
+        if "qwen3" in text:
+            return True
+    return False
 
 
 def _load_json_dict(raw_text: str | None) -> dict[str, Any]:
