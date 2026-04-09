@@ -31,7 +31,7 @@
 - 不把模型权重打进 OCI 主镜像
 - 不把前端退化成“后端顺手托管静态文件”
 - 不把启动脚本继续做成万能安装器
-- 不默认要求用户手动安装 `vllm`、`torch`、`sam3`、`llamafactory`
+- 不默认要求用户手动安装 `vllm`、`torch`、`sam2`、`llamafactory`
 
 ## 2. 交付物
 
@@ -60,7 +60,7 @@
 
 - `autolabel-runtime:<version>`
   - 复用于 `api`、`worker`、`vllm`
-  - 内含固定版本 Python 运行时、后端代码、`torch`、`vllm`、`llamafactory`、`sam3` 等依赖
+  - 内含固定版本 Python 运行时、后端代码、`torch`、`vllm`、`llamafactory`、`sam2` 等依赖
 - `autolabel-frontend:<version>`
   - 独立前端服务
   - 提供生产构建后的前端资源
@@ -106,14 +106,15 @@
   - 默认直接使用公开官方源
   - 无 token 时先尝试公开下载
   - 若官方源限流、需要鉴权或镜像源失败，再要求用户设置 `HF_TOKEN`
-- SAM3：
-  - 默认权重源：`1038lab/sam3`
-  - 若默认源不可用或下载失败，再要求用户提供 `HF_TOKEN` 并切换到官方仓库
+- SAM2：
+  - 默认使用 `SAM2` 官方公开 checkpoint 源
+  - 默认不要求 token
+  - 若公共源不可用、下载失败，或用户显式切换到需要鉴权的官方仓库，再要求用户提供 `HF_TOKEN`
 
 说明：
 
-- `1038lab/sam3` 在本方案中定义为“默认权重来源”，不是完整运行时镜像。
-- 运行时所需的 `sam3` Python 依赖、推理环境和附加资产由应用 OCI 镜像负责。
+- `SAM2` 在本方案中定义为默认分割基线，checkpoint 走公开官方下载路径，运行时依赖由应用 OCI 镜像负责。
+- 若后续需要支持受限镜像源或额外镜像站点，仍应保持“默认无 token，失败后再要求 token”的用户体验原则。
 
 ### 4.3 宿主机目录约定
 
@@ -272,7 +273,7 @@
 - `torch`
 - `vllm`
 - `llamafactory`
-- `sam3`
+- `sam2`
 - 前端构建产物版本
 
 ## 9. 实施顺序
@@ -293,7 +294,7 @@
 - 首发宿主系统：`Ubuntu 22.04 x86_64`
 - 镜像托管：`Docker Hub`
 - 前端保留为正式独立服务
-- 默认 SAM3 权重来源：`1038lab/sam3`
-- 默认优先使用无 token 来源，失败后再要求 `HF_TOKEN` 并切回官方仓库
+- 默认分割模型基线：`SAM2`
+- 默认优先使用 `SAM2` 官方公开源，不要求 token；失败后再要求 `HF_TOKEN` 并切回受限官方仓库
 - 启动脚本必须承担 `doctor` / `doctor --fix` / `selftest` 入口职责
 - 正式支持显存档位：`16G / 24G / 32G+`
