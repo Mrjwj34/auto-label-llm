@@ -175,13 +175,14 @@ POST /api/projects/{id}/evaluate
 - 分割项目现在会真实生成二值 `mask PNG` 并同步产出 polygon，`mask_path` 会落盘到 `data/projects/{project_id}/masks/`
 - 默认开发档仍然优先走低算力友好的 `stub`，但 stub 已升级为“先生成真实 mask，再统一后处理/落盘”，因此本地联调、接口测试、浏览器纠错测试都能覆盖真实数据流
 - 项目默认 `sam.checkpoint` 已切到 `sam3` / `sam3.1` symbolic alias；`test_real_stack` / `demo_prod` 默认使用 `sam3.1`
-- 当前真实 SAM3 启用策略是“显式开启”：
+- `bash scripts/start-linux.sh --profile test_real_stack --with-sam3 ...` 或 `demo_prod` 路径下，如果 `models/sam3/` 里还没有可用 checkpoint，脚本现在会自动补齐对应的 `sam3.1` 权重，避免真实联调时静默回退到 stub
+- 其他启动方式下，真实 SAM3 仍然按“显式开启”处理：
   - 提供本地 `.pt` checkpoint 路径给 `sam.checkpoint`
   - 或在明确接受下载模型时设置 `SAM3_ALLOW_HF_DOWNLOAD=1`
 - 现在额外支持两条更直接的真实路径：
   - 设置 `SAM3_CHECKPOINT_PATH=/abs/path/to/xxx.pt`
   - 直接把权重放进 `models/sam3/`，后端会自动按 `sam3` / `sam3.1` alias 优先匹配
-- 如果本机没有安装官方 `sam3` / `torch` 或没有可用 checkpoint，后端会自动回退到 stub，不会在开发过程中偷偷拉起大模型下载
+- 如果本机没有安装官方 `sam3` / `torch`，或者你使用的是非真实 profile 且没有可用 checkpoint，后端会自动回退到 stub，不会在开发过程中偷偷拉起大模型下载
 
 示例：
 

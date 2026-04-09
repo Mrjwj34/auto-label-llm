@@ -447,6 +447,51 @@ build_hf_repo_cache_dir() {
   printf '%s/models--%s\n' "$hub_cache_dir" "${model_source//\//--}"
 }
 
+find_local_sam3_checkpoint() {
+  local wanted="${1:-sam3}"
+  local python_exe="${venv_python:-${system_python:-python3}}"
+  "$python_exe" - "$repo_root" "$wanted" <<'PY'
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+repo_root = Path(sys.argv[1]).resolve()
+wanted = str(sys.argv[2] or "sam3").strip().casefold()
+model_dir = repo_root / "models" / "sam3"
+if not model_dir.exists():
+    raise SystemExit(1)
+
+candidates = sorted(
+    [path for path in model_dir.rglob("*") if path.is_file() and path.suffix.lower() in {".pt", ".pth"}],
+    key=lambda path: path.name.casefold(),
+)
+if not candidates:
+    raise SystemExit(1)
+
+wanted_tags: list[str] = []
+if "3.1" in wanted:
+    wanted_tags.extend(["3.1", "sam3.1", "multiplex"])
+elif wanted == "sam3":
+    wanted_tags.extend(["sam3", "3.1", "multiplex"])
+elif wanted:
+    wanted_tags.append(wanted)
+
+selected = None
+for tag in wanted_tags:
+    for candidate in candidates:
+        if tag in candidate.name.casefold():
+            selected = candidate
+            break
+    if selected is not None:
+        break
+if selected is None:
+    selected = candidates[0]
+
+print(selected.resolve())
+PY
+}
+
 emit_local_vllm_progress() {
   local model_source="${1:-}"
   local repo_cache_dir=""
@@ -1360,6 +1405,19 @@ install_state_dir="$state_dir/install-state"
 mkdir -p "$setup_log_dir" "$managed_log_dir" "$install_state_dir"
 local_vllm_state_path="$state_dir/local-vllm-state.json"
 
+require_real_sam3_checkpoint=0
+if [[ "$with_sam3" == "yes" ]]; then
+  if [[ "$profile" == "test_real_stack" || "$profile" == "demo_prod" ]]; then
+    require_real_sam3_checkpoint=1
+  fi
+  if [[ "$require_real_sam3_checkpoint" -eq 1 && "$download_sam3_checkpoint" -eq 0 ]]; then
+    if ! find_local_sam3_checkpoint "$sam3_version" >/dev/null 2>&1; then
+      download_sam3_checkpoint=1
+      log "No local SAM3 checkpoint found for $sam3_version; auto-enabling checkpoint download for profile $profile."
+    fi
+  fi
+fi
+
 readarray -t _vllm_parts < <("$system_python" - "$vllm_base_url" <<'PY'
 from __future__ import annotations
 
@@ -1625,6 +1683,17 @@ if source_path != destination_path.resolve():
     shutil.copy2(source_path, destination_path)
 print(destination_path)
 PY
+fi
+
+if [[ "$with_sam3" == "yes" ]]; then
+  sam3_checkpoint_path="$(find_local_sam3_checkpoint "$sam3_version" 2>/dev/null || true)"
+  if [[ -n "$sam3_checkpoint_path" ]]; then
+    log "Resolved SAM3 checkpoint: $sam3_checkpoint_path"
+  elif [[ "$require_real_sam3_checkpoint" -eq 1 ]]; then
+    die "Profile $profile requires a real SAM3 checkpoint, but none is available under $repo_root/models/sam3. Re-run with network access or provide a local checkpoint."
+  else
+    warn "No local SAM3 checkpoint was found for $sam3_version; the backend may fall back to the SAM stub runtime."
+  fi
 fi
 
 if [[ "$run_tests" -eq 1 ]]; then
