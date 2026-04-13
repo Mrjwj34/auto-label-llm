@@ -27,7 +27,7 @@
       "max_tokens": 1024
     },
     "sam": {
-      "checkpoint": "sam3.1",
+      "checkpoint": "sam2.1",
       "device": "cuda",
       "multimask_output": true
     },

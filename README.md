@@ -23,7 +23,7 @@ bash scripts/start-linux.sh --profile dev_low_resource --run-tests
 - 根据 profile 生成 `.env.active` 与 `frontend/.env.local`
 - 可选运行 `compileall + pytest + frontend build`
 - 拉起 Redis、worker、FastAPI、前端开发服务器
-- 在 `test_real_stack` / `demo_prod` 下按需补齐 `torch`、`sam3`、`vllm`、`LLaMA-Factory`
+- 在 `test_real_stack` / `demo_prod` 下按需补齐 `torch`、`sam2`、`vllm`、`LLaMA-Factory`
 - 启动本地 `vllm` 时默认使用更保守的显存参数，并在启动阶段持续输出最近日志，避免“卡住但没日志”
 
 常用用法：
@@ -33,11 +33,11 @@ bash scripts/start-linux.sh --profile dev_low_resource --run-tests
 bash scripts/start-linux.sh --profile dev_low_resource --run-tests
 
 # 只补环境，不启动服务；适合先预热昂贵算力机器
-bash scripts/start-linux.sh --profile test_real_stack --setup-only --with-sam3 --with-llamafactory
+bash scripts/start-linux.sh --profile test_real_stack --setup-only --with-sam --with-llamafactory
 
-# 真正的本地真实栈联调：本机起 vLLM + SAM3 + LLaMA-Factory
+# 真正的本地真实栈联调：本机起 vLLM + SAM2 + LLaMA-Factory
 VLLM_MODEL_SOURCE=Qwen/Qwen3-VL-8B-Instruct-FP8 \
-bash scripts/start-linux.sh --profile test_real_stack --with-vllm --with-sam3 --with-llamafactory
+bash scripts/start-linux.sh --profile test_real_stack --with-vllm --with-sam --with-llamafactory
 
 # 如果显存比较紧，可以继续压低 vLLM 参数，或透传额外参数
 VLLM_MODEL_SOURCE=Qwen/Qwen3-VL-8B-Instruct-FP8 \
@@ -171,24 +171,24 @@ POST /api/projects/{id}/evaluate
 - `POST /api/projects/{id}/models/activate` 用于在 `base` 和 `lora:{job_id}` 之间切换当前项目的活动模型
 - `POST /api/finetune/{id}/activate` 仍然保留，用于从最近完成的 LoRA 任务快速激活对应 tag；启用 `VLLM_ENABLE_RUNTIME_LORA_UPDATE=true` 时也会同步触发 vLLM 运行时 LoRA 更新
 
-### 分割与 SAM3（M12）
+### 分割与 SAM（M12 / M17 迁移中）
 
 - 分割项目现在会真实生成二值 `mask PNG` 并同步产出 polygon，`mask_path` 会落盘到 `data/projects/{project_id}/masks/`
 - 默认开发档仍然优先走低算力友好的 `stub`，但 stub 已升级为“先生成真实 mask，再统一后处理/落盘”，因此本地联调、接口测试、浏览器纠错测试都能覆盖真实数据流
-- 项目默认 `sam.checkpoint` 已切到 `sam3` / `sam3.1` symbolic alias；`test_real_stack` / `demo_prod` 默认使用 `sam3.1`
-- `bash scripts/start-linux.sh --profile test_real_stack --with-sam3 ...` 或 `demo_prod` 路径下，如果 `models/sam3/` 里还没有可用 checkpoint，脚本会优先尝试自动补齐对应的 `sam3.1` 权重；若当前机器没有 Hugging Face 登录态或未获 `facebook/sam3.1` 访问权限，会直接报清楚，不再静默回退到 stub
-- 其他启动方式下，真实 SAM3 仍然按“显式开启”处理：
+- M17 当前正把真实分割基线从 `SAM3` 迁到 `SAM2`；默认 symbolic alias 已切到 `sam2` / `sam2.1`，其中 `test_real_stack` / `demo_prod` 默认使用 `sam2.1`
+- `bash scripts/start-linux.sh --profile test_real_stack --with-sam ...` 或 `demo_prod` 路径下，如果 `models/sam2/` 里还没有可用 checkpoint，脚本会优先尝试补齐公开的 `sam2.1` 权重；若公开源失败，再根据脚本提示切换到需要 token 的仓库
+- 其他启动方式下，真实 SAM 仍然按“显式开启”处理：
   - 提供本地 `.pt` checkpoint 路径给 `sam.checkpoint`
-  - 或在明确接受下载模型时设置 `SAM3_ALLOW_HF_DOWNLOAD=1`
+  - 或通过 `SAM_CHECKPOINT_PATH` / `SAM2_CHECKPOINT_PATH` 指定本地权重
 - 现在额外支持两条更直接的真实路径：
-  - 设置 `SAM3_CHECKPOINT_PATH=/abs/path/to/xxx.pt`
-  - 直接把权重放进 `models/sam3/`，后端会自动按 `sam3` / `sam3.1` alias 优先匹配
-- 如果本机没有安装官方 `sam3` / `torch`，或者你使用的是非真实 profile 且没有可用 checkpoint，后端会自动回退到 stub，不会在开发过程中偷偷拉起大模型下载
+  - 设置 `SAM_CHECKPOINT_PATH=/abs/path/to/xxx.pt`
+  - 直接把权重放进 `models/sam2/`，后端会自动按 `sam2` / `sam2.1` alias 优先匹配
+- 如果本机没有安装官方 `sam2` / `torch`，或者你使用的是非真实 profile 且没有可用 checkpoint，后端会自动回退到 stub，不会在开发过程中偷偷拉起大模型下载
 
 示例：
 
 ```powershell
-$env:SAM3_ALLOW_HF_DOWNLOAD="1"
+$env:SAM_CHECKPOINT_PATH="models/sam2/sam2.1_hiera_large.pt"
 python -m backend.main
 ```
 
@@ -197,7 +197,7 @@ python -m backend.main
 ```json
 {
   "sam": {
-    "checkpoint": "models/sam3/sam3.1_multiplex.pt",
+    "checkpoint": "models/sam2/sam2.1_hiera_large.pt",
     "device": "cuda",
     "multimask_output": false
   }

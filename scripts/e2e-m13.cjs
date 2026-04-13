@@ -152,7 +152,7 @@ function ensureUploadFixtures() {
       return count;
     }, 15000, 'uploaded image list');
 
-    await page.getByTestId('project-sam-checkpoint-input').fill('sam3.1');
+    await page.getByTestId('project-sam-checkpoint-input').fill('sam2.1');
     await page.getByTestId('quality-threshold-review-input').fill('0.71');
     await Promise.all([
       page.waitForResponse((resp) => resp.url().endsWith('/api/system/settings') && resp.request().method() === 'PATCH'),
@@ -171,7 +171,7 @@ function ensureUploadFixtures() {
     if (Number(systemSettings.data.quality.threshold_review) !== 0.71) {
       throw new Error(`system quality threshold is ${systemSettings.data.quality.threshold_review}`);
     }
-    if (String(systemSettings.data.sam.checkpoint) !== 'sam3.1') {
+    if (String(systemSettings.data.sam.checkpoint) !== 'sam2.1') {
       throw new Error(`system sam checkpoint is ${systemSettings.data.sam.checkpoint}`);
     }
 
@@ -179,7 +179,7 @@ function ensureUploadFixtures() {
     await page.getByTestId('project-sam-checkpoint-input').waitFor({ state: 'visible', timeout: 15000 });
     const samCheckpoint = await waitFor(async () => {
       const value = await page.getByTestId('project-sam-checkpoint-input').inputValue();
-      if (value !== 'sam3.1') {
+      if (value !== 'sam2.1') {
         throw new Error(`sam checkpoint is ${value}`);
       }
       return value;
@@ -191,7 +191,7 @@ function ensureUploadFixtures() {
       }
       return value;
     }, 10000, 'review threshold after reload');
-    if (samCheckpoint !== 'sam3.1') {
+    if (samCheckpoint !== 'sam2.1') {
       throw new Error(`sam checkpoint after reload is ${samCheckpoint}`);
     }
     if (reviewThreshold !== '0.71') {

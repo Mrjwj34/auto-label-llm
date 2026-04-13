@@ -72,7 +72,7 @@
 | M14 | 真实 LoRA 微调闭环 | LLaMA-Factory 真训练 + LoRA 激活后真正参与推理 | 🟡 | - |
 | M15 | 评估系统增强与对比看板 | mask 指标、run 对比、失败案例分析、性能统计 | ✅ | - |
 | M16 | 一键启动与演示脚本 | 一条命令启动所有服务与外部依赖 | ✅ | - |
-| M17 | SAM3 → SAM2 迁移 | 分割链路切到更贴近当前需求的 SAM2 官方路线 | ⬜ | - |
+| M17 | SAM3 → SAM2 迁移 | 分割链路切到更贴近当前需求的 SAM2 官方路线 | ⏳ | - |
 | M18 | OCI 分发与环境自检 | Docker Hub 固定镜像 + Compose + 模型缓存 + doctor/selftest | ⬜ | - |
 | M19 | 前端完全重构 | 以正式产品形态重做前端架构、交互与视觉体系 | ⬜ | - |
 
@@ -481,3 +481,4 @@
 | 2026-04-07 | M14 | ⬜ → 🟡 | - | `.venv\Scripts\python.exe -m compileall backend tests scripts`、`.venv\Scripts\python.exe -m pytest -q`、`cd frontend && npm run build`、`.venv\Scripts\python.exe scripts\verify_m14_browser.py --redis-url redis://127.0.0.1:6380/14 --flush-redis-db` | ✅ 后端测试 + 浏览器回归通过 | 真实 LLaMA-Factory subprocess 入口、metrics 暴露、LoRA runtime API hook 与可复跑浏览器验证脚本已落地；真实训练效果仍待 `test_real_stack` 验收 |
 | 2026-04-07 | M15 | ⬜ → ✅ | - | `.venv\Scripts\python.exe -m compileall backend tests scripts`、`.venv\Scripts\python.exe -m pytest -q`、`cd frontend && npm run build`、Playwright MCP 浏览器回归（两次 evaluation compare + failure sample 面板） | ✅ 代码测试 + 浏览器回归通过 | 已补齐 `mIoU_mask / Dice`、run compare API、失败样本摘要、性能统计与前端对比看板，达到本地验收条件 |
 | 2026-04-07 | M16 | ⬜ → ✅ | - | `wsl bash -n scripts/start-linux.sh`、`wsl bash scripts/start-linux.sh --help`、`.venv\Scripts\python.exe -m compileall backend tests scripts`、`.venv\Scripts\python.exe -m pytest -q`、`cd frontend && npm run build` | ✅ 启动脚本语法/帮助页通过，代码测试通过 | 已收敛为单一 `scripts/start-linux.sh` Linux 入口；当前 WSL 因缺少 `python3-pip/ensurepip` 且无免密 sudo，未完整跑通自动补系统依赖分支，但失败提示已验证清晰，目标 Linux 机器按 README 具备 sudo 后即可走完整自举链路 |
+| 2026-04-13 | M17 | ⬜ → ⏳ | - | `.venv_test/bin/pytest tests/test_sam_service_m12.py tests/test_api_m10_settings.py tests/test_profile_scripts.py tests/test_api_m4_auto_annotations.py tests/test_api_m5_segmentation.py tests/test_api_m6_corrections.py tests/test_api_m7_dataset_io.py tests/test_api_m1.py tests/test_api_m2_annotations.py tests/test_api_m3_tasks.py -q`、`bash -n scripts/start-linux.sh`、`bash scripts/start-linux.sh --help` | ⏳ 待后续真机验收 | 已将默认 `SAM` 基线切到 `SAM2`，保留 `SAM3` 兼容分支；本地仅做 CPU/stub/配置级验证，不触发任何真实模型推理或下载 |

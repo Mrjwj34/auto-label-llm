@@ -422,7 +422,7 @@ def _parse_yolo_annotation_line(
     if task_type == "segmentation":
         sam_settings = load_project_settings(project).get("sam", {})
         sam_kwargs = {
-            "checkpoint": str(sam_settings.get("checkpoint") or "sam3"),
+            "checkpoint": str(sam_settings.get("checkpoint") or "sam2"),
             "device": str(sam_settings.get("device") or "cuda"),
             "multimask_output": bool(sam_settings.get("multimask_output", False)),
         }
@@ -589,7 +589,7 @@ def _parse_coco_annotation(
         prediction = SAMService().predict_polygon(
             image,
             bbox,
-            checkpoint=str(sam_settings.get("checkpoint") or "sam3"),
+            checkpoint=str(sam_settings.get("checkpoint") or "sam2"),
             device=str(sam_settings.get("device") or "cuda"),
             multimask_output=bool(sam_settings.get("multimask_output", False)),
         )

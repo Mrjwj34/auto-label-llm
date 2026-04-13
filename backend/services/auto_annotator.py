@@ -160,7 +160,7 @@ def _attach_segmentation_shapes(
         prediction = sam.predict_polygon(
             image,
             annotation.bbox,
-            checkpoint=str(sam_settings.get("checkpoint") or "sam3"),
+            checkpoint=str(sam_settings.get("checkpoint") or "sam2"),
             device=str(sam_settings.get("device") or "cuda"),
             multimask_output=bool(sam_settings.get("multimask_output", False)),
             lock_timeout=sam_lock_timeout,

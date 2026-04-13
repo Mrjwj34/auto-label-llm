@@ -124,7 +124,7 @@ Recommended smoke path:
 
 Recommended real-stack path:
   VLLM_MODEL_SOURCE=Qwen/Qwen3-VL-8B-Instruct-FP8 \
-  bash scripts/start-linux.sh --profile test_real_stack --with-vllm --with-sam3 --with-llamafactory
+  bash scripts/start-linux.sh --profile test_real_stack --with-vllm --with-sam --with-llamafactory
 
 Options:
   --profile <name>                  Profile name. Default: dev_low_resource
@@ -139,8 +139,10 @@ Options:
   --redis-url <url>                 Full Redis URL. Default: redis://127.0.0.1:<port>/0
   --with-vllm                       Install/start local vLLM if needed
   --skip-vllm                       Do not install/start local vLLM
-  --with-sam3                       Install real SAM3 dependencies
-  --skip-sam3                       Skip real SAM3 dependencies
+  --with-sam                        Install real SAM dependencies (SAM2 default, SAM3 legacy compatible)
+  --skip-sam                        Skip real SAM dependencies
+  --with-sam3                       Legacy alias of --with-sam
+  --skip-sam3                       Legacy alias of --skip-sam
   --with-llamafactory               Install LLaMA-Factory CLI
   --skip-llamafactory               Skip LLaMA-Factory CLI installation
   --vllm-model-source <value>       Hugging Face id or local path for local vLLM
@@ -165,8 +167,11 @@ Options:
   --vllm-no-safe-mode               Disable conservative vLLM auto-tuning / clamping
   --vllm-arg <token>                Append one raw extra token to the vLLM command; repeat as needed
   --llamafactory-cli <command>      CLI used by backend FINETUNE_BACKEND=auto. Default: llamafactory-cli
-  --download-sam3-checkpoint        Download the configured SAM3 checkpoint family
-  --sam3-version <sam3|sam3.1>      Checkpoint family when downloading; auto by profile
+  --download-sam-checkpoint         Download the configured SAM checkpoint family
+  --sam-version <sam2|sam2.1|sam3|sam3.1>
+                                    Checkpoint family when downloading; auto by profile
+  --download-sam3-checkpoint        Legacy alias of --download-sam-checkpoint
+  --sam3-version <sam3|sam3.1>      Legacy alias of --sam-version
   --run-tests                       Run compileall + pytest + frontend build before startup
   --setup-only                      Stop after environment setup and optional tests
   --skip-frontend-install           Skip npm ci / npm install
@@ -175,7 +180,7 @@ Options:
   --no-frontend                     Do not start the frontend dev server
   --refresh-python-deps             Force reinstall requirements.txt inside the venv
   --refresh-frontend-deps           Force reinstall frontend dependencies
-  --refresh-optional-deps           Force reinstall optional packages such as vLLM / SAM3 / LLaMA-Factory
+  --refresh-optional-deps           Force reinstall optional packages such as vLLM / SAM / LLaMA-Factory
   --refresh-all-deps                Force reinstall every managed dependency bucket
   -h, --help                        Show this help
 
@@ -183,7 +188,8 @@ Environment overrides:
   PYTHON_BIN                 Preferred Python executable
   TORCH_PIP_SPEC             Torch packages. Default: "torch torchvision"
   TORCH_EXTRA_INDEX_URL      Torch wheel index. Default: https://download.pytorch.org/whl/cu126
-  SAM3_PIP_SPEC              SAM3 packages. Default: "git+https://github.com/facebookresearch/sam3.git huggingface_hub pycocotools"
+  SAM_PIP_SPEC               SAM packages. Default: "git+https://github.com/facebookresearch/sam2.git huggingface_hub pycocotools"
+  SAM3_PIP_SPEC              Legacy override for SAM3 packages
   VLLM_PIP_SPEC              vLLM packages. Default: "vllm"
   LLAMAFACTORY_PIP_SPEC      LLaMA-Factory packages. Default: "llamafactory bitsandbytes"
   VLLM_MAX_MODEL_LEN         Optional vLLM max context length override
@@ -464,8 +470,8 @@ build_hf_repo_cache_dir() {
   printf '%s/models--%s\n' "$hub_cache_dir" "${model_source//\//--}"
 }
 
-find_local_sam3_checkpoint() {
-  local wanted="${1:-sam3}"
+find_local_sam_checkpoint() {
+  local wanted="${1:-sam2}"
   local python_exe="${venv_python:-${system_python:-python3}}"
   "$python_exe" - "$repo_root" "$wanted" <<'PY'
 from __future__ import annotations
@@ -474,8 +480,9 @@ import sys
 from pathlib import Path
 
 repo_root = Path(sys.argv[1]).resolve()
-wanted = str(sys.argv[2] or "sam3").strip().casefold()
-model_dir = repo_root / "models" / "sam3"
+wanted = str(sys.argv[2] or "sam2").strip().casefold()
+family = "sam3" if ("sam3" in wanted or "3.1" in wanted) else "sam2"
+model_dir = repo_root / "models" / family
 if not model_dir.exists():
     raise SystemExit(1)
 
@@ -487,12 +494,29 @@ if not candidates:
     raise SystemExit(1)
 
 wanted_tags: list[str] = []
-if "3.1" in wanted:
-    wanted_tags.extend(["3.1", "sam3.1", "multiplex"])
-elif wanted == "sam3":
-    wanted_tags.extend(["sam3", "3.1", "multiplex"])
-elif wanted:
-    wanted_tags.append(wanted)
+if family == "sam3":
+    if "3.1" in wanted:
+        wanted_tags.extend(["3.1", "sam3.1", "multiplex"])
+    elif wanted == "sam3":
+        wanted_tags.extend(["sam3", "3.1", "multiplex"])
+    elif wanted:
+        wanted_tags.append(wanted)
+else:
+    if "2.1" in wanted:
+        wanted_tags.extend(["sam2.1", "2.1"])
+    elif wanted in {"", "sam2"}:
+        wanted_tags.extend(["sam2.1", "2.1", "sam2"])
+    else:
+        wanted_tags.append(wanted)
+
+    if any(tag in wanted for tag in ("tiny", "hiera_t", "_t")):
+        wanted_tags.extend(["tiny", "hiera_t"])
+    elif any(tag in wanted for tag in ("small", "hiera_s", "_s")):
+        wanted_tags.extend(["small", "hiera_s"])
+    elif any(tag in wanted for tag in ("base_plus", "base+", "b+", "hiera_b")):
+        wanted_tags.extend(["base_plus", "base+", "b+", "hiera_b"])
+    else:
+        wanted_tags.extend(["large", "hiera_l"])
 
 selected = None
 for tag in wanted_tags:
@@ -1207,11 +1231,11 @@ while [[ $# -gt 0 ]]; do
       with_vllm="no"
       shift
       ;;
-    --with-sam3)
+    --with-sam|--with-sam3)
       with_sam3="yes"
       shift
       ;;
-    --skip-sam3)
+    --skip-sam|--skip-sam3)
       with_sam3="no"
       shift
       ;;
@@ -1326,11 +1350,11 @@ while [[ $# -gt 0 ]]; do
       llamafactory_cli="$2"
       shift 2
       ;;
-    --download-sam3-checkpoint)
+    --download-sam-checkpoint|--download-sam3-checkpoint)
       download_sam3_checkpoint=1
       shift
       ;;
-    --sam3-version)
+    --sam-version|--sam3-version)
       sam3_version="$2"
       shift 2
       ;;
@@ -1422,9 +1446,9 @@ fi
 
 if [[ -z "$sam3_version" ]]; then
   if [[ "$profile" == "test_real_stack" || "$profile" == "demo_prod" ]]; then
-    sam3_version="sam3.1"
+    sam3_version="sam2.1"
   else
-    sam3_version="sam3"
+    sam3_version="sam2"
   fi
 fi
 
@@ -1444,7 +1468,7 @@ system_python="$(choose_python)"
 
 ensure_base_tools
 
-mkdir -p "$repo_root/data" "$repo_root/logs" "$repo_root/models/sam3"
+mkdir -p "$repo_root/data" "$repo_root/logs" "$repo_root/models/sam2" "$repo_root/models/sam3"
 session_log_dir="$repo_root/logs/start-linux-$timestamp"
 setup_log_dir="$session_log_dir/setup"
 managed_log_dir="$session_log_dir/runtime"
@@ -1459,9 +1483,9 @@ if [[ "$with_sam3" == "yes" ]]; then
     require_real_sam3_checkpoint=1
   fi
   if [[ "$require_real_sam3_checkpoint" -eq 1 && "$download_sam3_checkpoint" -eq 0 ]]; then
-    if ! find_local_sam3_checkpoint "$sam3_version" >/dev/null 2>&1; then
+    if ! find_local_sam_checkpoint "$sam3_version" >/dev/null 2>&1; then
       download_sam3_checkpoint=1
-      log "No local SAM3 checkpoint found for $sam3_version; auto-enabling checkpoint download for profile $profile."
+      log "No local SAM checkpoint found for $sam3_version; auto-enabling checkpoint download for profile $profile."
     fi
   fi
 fi
@@ -1556,19 +1580,19 @@ elif [[ "$with_vllm" == "yes" ]]; then
 fi
 
 if [[ "$with_sam3" == "yes" ]]; then
-  read -r -a sam3_packages <<<"${SAM3_PIP_SPEC:-git+https://github.com/facebookresearch/sam3.git huggingface_hub pycocotools}"
+  read -r -a sam3_packages <<<"${SAM_PIP_SPEC:-${SAM3_PIP_SPEC:-git+https://github.com/facebookresearch/sam2.git huggingface_hub pycocotools}}"
   sam3_fingerprint="$(
     compute_fingerprint \
       "$venv_python" \
-      "bucket:sam3" \
+      "bucket:sam" \
       "python:$python_runtime_id" \
       "spec:${sam3_packages[*]}"
   )"
   run_cached_step \
-    "sam3" \
+    "sam" \
     "$sam3_fingerprint" \
     "$(( venv_created || refresh_optional_deps ))" \
-    "Installing SAM3 packages: ${sam3_packages[*]}" \
+    "Installing SAM packages: ${sam3_packages[*]}" \
     "$venv_python" -m pip install --disable-pip-version-check --progress-bar off "${sam3_packages[@]}"
 fi
 
@@ -1709,13 +1733,49 @@ fi
 write_profile_envs
 
 if [[ "$download_sam3_checkpoint" -eq 1 ]]; then
-  if ! has_hf_hub_auth; then
-    die "Downloading SAM3 checkpoints requires Hugging Face access to facebook/$sam3_version. Set HF_TOKEN (or HUGGING_FACE_HUB_TOKEN), run '$venv_dir/bin/hf auth login', or place a local .pt checkpoint under $repo_root/models/sam3."
-  fi
-  run_logged_step \
-    "Downloading SAM3 checkpoint family: $sam3_version" \
-    "$setup_log_dir/download-sam3.log" \
-    "$venv_python" - "$repo_root" "$sam3_version" <<'PY'
+  if [[ "$sam3_version" == sam2* ]]; then
+    run_logged_step \
+      "Downloading SAM checkpoint family: $sam3_version" \
+      "$setup_log_dir/download-sam.log" \
+      "$venv_python" - "$repo_root" "$sam3_version" <<'PY'
+from __future__ import annotations
+
+import shutil
+import sys
+import urllib.request
+from pathlib import Path
+
+repo_root = Path(sys.argv[1]).resolve()
+version = sys.argv[2]
+destination_dir = repo_root / "models" / "sam2"
+destination_dir.mkdir(parents=True, exist_ok=True)
+
+url_map = {
+    "sam2": "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_large.pt",
+    "sam2.1": "https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt",
+}
+url = url_map.get(version)
+if not url:
+    raise SystemExit(f"Unsupported SAM version for auto-download: {version}")
+
+filename = url.rsplit("/", 1)[-1]
+destination_path = destination_dir / filename
+if destination_path.exists():
+    print(destination_path)
+    raise SystemExit(0)
+
+with urllib.request.urlopen(url) as response, destination_path.open("wb") as handle:
+    shutil.copyfileobj(response, handle)
+print(destination_path)
+PY
+  else
+    if ! has_hf_hub_auth; then
+      die "Downloading SAM3 checkpoints requires Hugging Face access to facebook/$sam3_version. Set HF_TOKEN (or HUGGING_FACE_HUB_TOKEN), run '$venv_dir/bin/hf auth login', or place a local .pt checkpoint under $repo_root/models/sam3."
+    fi
+    run_logged_step \
+      "Downloading SAM checkpoint family: $sam3_version" \
+      "$setup_log_dir/download-sam.log" \
+      "$venv_python" - "$repo_root" "$sam3_version" <<'PY'
 from __future__ import annotations
 
 import shutil
@@ -1744,16 +1804,20 @@ if source_path != destination_path.resolve():
     shutil.copy2(source_path, destination_path)
 print(destination_path)
 PY
+  fi
 fi
 
 if [[ "$with_sam3" == "yes" ]]; then
-  sam3_checkpoint_path="$(find_local_sam3_checkpoint "$sam3_version" 2>/dev/null || true)"
+  sam3_checkpoint_path="$(find_local_sam_checkpoint "$sam3_version" 2>/dev/null || true)"
   if [[ -n "$sam3_checkpoint_path" ]]; then
-    log "Resolved SAM3 checkpoint: $sam3_checkpoint_path"
+    log "Resolved SAM checkpoint: $sam3_checkpoint_path"
   elif [[ "$require_real_sam3_checkpoint" -eq 1 ]]; then
+    if [[ "$sam3_version" == sam2* ]]; then
+      die "Profile $profile requires a real SAM2 checkpoint, but none is available under $repo_root/models/sam2. Re-run with network access or provide a local checkpoint."
+    fi
     die "Profile $profile requires a real SAM3 checkpoint, but none is available under $repo_root/models/sam3. Re-run with network access or provide a local checkpoint."
   else
-    warn "No local SAM3 checkpoint was found for $sam3_version; the backend may fall back to the SAM stub runtime."
+    warn "No local SAM checkpoint was found for $sam3_version; the backend may fall back to the SAM stub runtime."
   fi
 fi
 

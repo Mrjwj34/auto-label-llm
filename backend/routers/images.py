@@ -279,7 +279,7 @@ def _project_sam_kwargs(project: Project | None) -> dict[str, Any]:
     settings = load_project_settings(project)
     sam_settings = settings.get("sam", {}) if isinstance(settings.get("sam"), dict) else {}
     return {
-        "checkpoint": str(sam_settings.get("checkpoint") or "sam3"),
+        "checkpoint": str(sam_settings.get("checkpoint") or "sam2"),
         "device": str(sam_settings.get("device") or "cuda"),
         "multimask_output": bool(sam_settings.get("multimask_output", False)),
     }

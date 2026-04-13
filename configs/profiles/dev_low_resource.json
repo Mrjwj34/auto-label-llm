@@ -22,7 +22,7 @@
       "max_tokens": 1024
     },
     "sam": {
-      "checkpoint": "sam3",
+      "checkpoint": "sam2",
       "device": "cpu",
       "multimask_output": false
     },

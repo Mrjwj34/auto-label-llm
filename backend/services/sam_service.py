@@ -23,6 +23,9 @@ except Exception:  # noqa: BLE001
     _np = None
 
 
+DEFAULT_SAM_CHECKPOINT = "sam2"
+
+
 @dataclass
 class SAMPrediction:
     polygon: list[list[float]] | None = None
@@ -67,6 +70,8 @@ def _clamp01(value: float) -> float:
 
 def _checkpoint_curve_ratio(checkpoint: str) -> float:
     name = checkpoint.casefold()
+    if "2.1" in name:
+        return 0.11
     if "3.1" in name:
         return 0.11
     if "large" in name:
@@ -74,6 +79,19 @@ def _checkpoint_curve_ratio(checkpoint: str) -> float:
     if "base" in name:
         return 0.14
     return 0.17
+
+
+def _checkpoint_family(checkpoint: str) -> str:
+    lowered = str(checkpoint or "").strip().casefold()
+    if not lowered:
+        return "sam2"
+    if "sam3" in lowered or "3.1" in lowered:
+        return "sam3"
+    return "sam2"
+
+
+def _family_display_name(family: str) -> str:
+    return "SAM3" if family == "sam3" else "SAM2"
 
 
 def _canonicalize_bbox(bbox: list[float]) -> list[float]:
@@ -147,7 +165,7 @@ class SAMService:
         return cls._instance
 
     def set_image(self, image: Image) -> None:
-        runtime = self._get_runtime(checkpoint="sam3", device="cpu")
+        runtime = self._get_runtime(checkpoint=DEFAULT_SAM_CHECKPOINT, device="cpu")
         self._prepare_image(runtime, image)
 
     def predict_polygon(
@@ -155,7 +173,7 @@ class SAMService:
         image: Image,
         bbox: list[float],
         *,
-        checkpoint: str = "sam3",
+        checkpoint: str = DEFAULT_SAM_CHECKPOINT,
         device: str = "cuda",
         multimask_output: bool = False,
         lock_timeout: float | None = None,
@@ -166,9 +184,9 @@ class SAMService:
         with lock_ctx:
             cache_hit = self._prepare_image(runtime, image)
 
-            if runtime.kind == "sam3":
+            if runtime.kind in {"sam2", "sam3"}:
                 try:
-                    prediction = self._predict_with_sam3(
+                    prediction = self._predict_with_real_runtime(
                         runtime,
                         bbox=normalized_bbox,
                         points=None,
@@ -194,7 +212,7 @@ class SAMService:
         annotation: Annotation,
         points: list[SAMPoint],
         *,
-        checkpoint: str = "sam3",
+        checkpoint: str = DEFAULT_SAM_CHECKPOINT,
         device: str = "cuda",
         multimask_output: bool = False,
         lock_timeout: float | None = None,
@@ -207,9 +225,9 @@ class SAMService:
         with lock_ctx:
             cache_hit = self._prepare_image(runtime, image)
 
-            if runtime.kind == "sam3":
+            if runtime.kind in {"sam2", "sam3"}:
                 try:
-                    prediction = self._predict_with_sam3(
+                    prediction = self._predict_with_real_runtime(
                         runtime,
                         bbox=_canonicalize_bbox(annotation.bbox),
                         points=points,
@@ -230,7 +248,7 @@ class SAMService:
             )
 
     def _get_runtime(self, *, checkpoint: str, device: str) -> _SAMRuntime:
-        normalized_checkpoint = str(checkpoint or "sam3").strip() or "sam3"
+        normalized_checkpoint = str(checkpoint or DEFAULT_SAM_CHECKPOINT).strip() or DEFAULT_SAM_CHECKPOINT
         resolved_device = self._resolve_device(device)
         key = (normalized_checkpoint, resolved_device)
         if key not in self._runtimes:
@@ -238,8 +256,55 @@ class SAMService:
         return self._runtimes[key]
 
     def _build_runtime(self, checkpoint: str, *, device: str) -> _SAMRuntime:
+        family = _checkpoint_family(checkpoint)
+        if family == "sam3":
+            return self._build_sam3_runtime(checkpoint, device=device)
+        return self._build_sam2_runtime(checkpoint, device=device)
+
+    def _build_sam2_runtime(self, checkpoint: str, *, device: str) -> _SAMRuntime:
         try:
-            checkpoint_path, checkpoint_label = self._resolve_real_checkpoint(checkpoint)
+            checkpoint_path, checkpoint_label = self._resolve_real_checkpoint(checkpoint, family="sam2")
+            model_cfg_candidates = self._resolve_sam2_model_cfg_candidates(
+                checkpoint=checkpoint,
+                checkpoint_path=checkpoint_path,
+                checkpoint_label=checkpoint_label,
+            )
+            build_module = importlib.import_module("sam2.build_sam")
+            predictor_module = importlib.import_module("sam2.sam2_image_predictor")
+            build_model = getattr(build_module, "build_sam2")
+            predictor_cls = getattr(predictor_module, "SAM2ImagePredictor")
+            last_error: Exception | None = None
+            for model_cfg in model_cfg_candidates:
+                try:
+                    model = build_model(model_cfg, checkpoint_path, device=device, apply_postprocessing=False)
+                    predictor = predictor_cls(model)
+                    return _SAMRuntime(
+                        checkpoint=checkpoint,
+                        requested_device=device,
+                        device=device,
+                        kind="sam2",
+                        provider=f"sam2:{checkpoint_label}:{device}",
+                        model=model,
+                        predictor=predictor,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    last_error = exc
+            if last_error is None:
+                raise RuntimeError("SAM2 model config resolution failed")
+            raise last_error
+        except Exception as exc:  # noqa: BLE001
+            return _SAMRuntime(
+                checkpoint=checkpoint,
+                requested_device=device,
+                device=device,
+                kind="stub",
+                provider=f"sam_stub:{checkpoint}:{device}",
+                load_error=str(exc),
+            )
+
+    def _build_sam3_runtime(self, checkpoint: str, *, device: str) -> _SAMRuntime:
+        try:
+            checkpoint_path, checkpoint_label = self._resolve_real_checkpoint(checkpoint, family="sam3")
             sam3_module = importlib.import_module("sam3")
             build_model = getattr(sam3_module, "build_sam3_image_model")
             model = build_model(
@@ -270,29 +335,36 @@ class SAMService:
                 load_error=str(exc),
             )
 
-    def _resolve_real_checkpoint(self, checkpoint: str) -> tuple[str, str]:
+    def _resolve_real_checkpoint(self, checkpoint: str, *, family: str | None = None) -> tuple[str, str]:
         raw = str(checkpoint or "").strip()
+        runtime_family = family or _checkpoint_family(raw)
         if self._looks_like_checkpoint_path(raw):
             checkpoint_path = resolve_path(raw)
             if not checkpoint_path.exists():
-                raise RuntimeError(f"SAM3 checkpoint not found: {checkpoint_path}")
+                raise RuntimeError(f"{_family_display_name(runtime_family)} checkpoint not found: {checkpoint_path}")
             return checkpoint_path.as_posix(), checkpoint_path.name
 
-        local_checkpoint = self._find_local_checkpoint(raw)
+        local_checkpoint = self._find_local_checkpoint(raw, family=runtime_family)
         if local_checkpoint is not None:
             return local_checkpoint.as_posix(), local_checkpoint.name
 
-        if os.getenv("SAM3_ALLOW_HF_DOWNLOAD", "").strip() != "1":
-            raise RuntimeError(
-                "SAM3 real runtime is disabled until a local .pt checkpoint is configured "
-                "or SAM3_ALLOW_HF_DOWNLOAD=1 is set."
-            )
+        if runtime_family == "sam3":
+            if os.getenv("SAM3_ALLOW_HF_DOWNLOAD", "").strip() != "1":
+                raise RuntimeError(
+                    "SAM3 real runtime is disabled until a local .pt checkpoint is configured "
+                    "or SAM3_ALLOW_HF_DOWNLOAD=1 is set."
+                )
 
-        builder_module = importlib.import_module("sam3.model_builder")
-        download_ckpt_from_hf = getattr(builder_module, "download_ckpt_from_hf")
-        version = "sam3.1" if "3.1" in raw else "sam3"
-        checkpoint_path = Path(download_ckpt_from_hf(version=version))
-        return checkpoint_path.as_posix(), f"{version}:{checkpoint_path.name}"
+            builder_module = importlib.import_module("sam3.model_builder")
+            download_ckpt_from_hf = getattr(builder_module, "download_ckpt_from_hf")
+            version = "sam3.1" if "3.1" in raw else "sam3"
+            checkpoint_path = Path(download_ckpt_from_hf(version=version))
+            return checkpoint_path.as_posix(), f"{version}:{checkpoint_path.name}"
+
+        raise RuntimeError(
+            "SAM2 real runtime is disabled until a local .pt checkpoint is configured via "
+            "SAM_CHECKPOINT_PATH / SAM2_CHECKPOINT_PATH or placed under models/sam2."
+        )
 
     def _prepare_image(self, runtime: _SAMRuntime, image: Image) -> bool:
         image_path = resolve_path(image.file_path)
@@ -303,16 +375,16 @@ class SAMService:
         pil_image = PILImage.open(image_path).convert("RGB")
         pil_image.load()
 
-        if runtime.kind == "sam3" and runtime.predictor is not None:
+        if runtime.kind in {"sam2", "sam3"} and runtime.predictor is not None:
             if _np is None:
-                raise RuntimeError("numpy is required for SAM3 runtime")
+                raise RuntimeError(f"numpy is required for {_family_display_name(runtime.kind)} runtime")
             runtime.predictor.set_image(_np.asarray(pil_image))
             runtime.image_cache = _ImageCache(key=image_key, size=pil_image.size, pil_image=None)
         else:
             runtime.image_cache = _ImageCache(key=image_key, size=pil_image.size, pil_image=pil_image)
         return False
 
-    def _predict_with_sam3(
+    def _predict_with_real_runtime(
         self,
         runtime: _SAMRuntime,
         *,
@@ -321,7 +393,7 @@ class SAMService:
         multimask_output: bool,
     ) -> SAMPrediction:
         if runtime.predictor is None or _np is None:
-            raise RuntimeError("SAM3 predictor is unavailable")
+            raise RuntimeError(f"{_family_display_name(runtime.kind)} predictor is unavailable")
 
         point_coords = None
         point_labels = None
@@ -342,7 +414,7 @@ class SAMService:
             mask=mask_image,
             provider=runtime.provider,
             score=score,
-            meta={"backend": "sam3"},
+            meta={"backend": runtime.kind},
         )
 
     def _predict_with_stub(
@@ -394,19 +466,29 @@ class SAMService:
             return False
         return value.endswith(".pt") or value.endswith(".pth") or "/" in value or "\\" in value
 
-    def _find_local_checkpoint(self, checkpoint: str) -> Path | None:
+    def _find_local_checkpoint(self, checkpoint: str, *, family: str | None = None) -> Path | None:
         raw = str(checkpoint or "").strip()
-        env_override = os.getenv("SAM3_CHECKPOINT_PATH", "").strip()
-        if env_override:
+        runtime_family = family or _checkpoint_family(raw)
+
+        env_override_specs: list[tuple[str, str]] = [("SAM_CHECKPOINT_PATH", "SAM checkpoint")]
+        if runtime_family == "sam3":
+            env_override_specs.append(("SAM3_CHECKPOINT_PATH", "SAM3 checkpoint"))
+        else:
+            env_override_specs.append(("SAM2_CHECKPOINT_PATH", "SAM2 checkpoint"))
+
+        for env_name, label in env_override_specs:
+            env_override = os.getenv(env_name, "").strip()
+            if not env_override:
+                continue
             env_path = resolve_path(env_override)
             if not env_path.exists():
-                raise RuntimeError(f"SAM3 checkpoint from SAM3_CHECKPOINT_PATH was not found: {env_path}")
+                raise RuntimeError(f"{label} from {env_name} was not found: {env_path}")
             if env_path.is_dir():
-                raise RuntimeError(f"SAM3_CHECKPOINT_PATH must point to a checkpoint file, got directory: {env_path}")
+                raise RuntimeError(f"{env_name} must point to a checkpoint file, got directory: {env_path}")
             return env_path
 
         root = get_settings().root_dir.resolve()
-        model_dir = (root / "models" / "sam3").resolve()
+        model_dir = (root / "models" / runtime_family).resolve()
         if not model_dir.exists():
             return None
 
@@ -419,12 +501,29 @@ class SAMService:
 
         wanted_tags: list[str] = []
         lowered = raw.casefold()
-        if "3.1" in lowered:
-            wanted_tags.extend(["3.1", "sam3.1", "multiplex"])
-        elif lowered == "sam3":
-            wanted_tags.extend(["sam3", "3.1", "multiplex"])
+        if runtime_family == "sam3":
+            if "3.1" in lowered:
+                wanted_tags.extend(["3.1", "sam3.1", "multiplex"])
+            elif lowered == "sam3":
+                wanted_tags.extend(["sam3", "3.1", "multiplex"])
+            elif lowered:
+                wanted_tags.append(lowered)
         else:
-            wanted_tags.append(lowered)
+            if "2.1" in lowered:
+                wanted_tags.extend(["sam2.1", "2.1"])
+            elif lowered in {"", "sam2"}:
+                wanted_tags.extend(["sam2.1", "2.1", "sam2"])
+            else:
+                wanted_tags.append(lowered)
+
+            if any(tag in lowered for tag in ("tiny", "hiera_t", "_t")):
+                wanted_tags.extend(["tiny", "hiera_t"])
+            elif any(tag in lowered for tag in ("small", "hiera_s", "_s")):
+                wanted_tags.extend(["small", "hiera_s"])
+            elif any(tag in lowered for tag in ("base_plus", "base+", "b+", "hiera_b")):
+                wanted_tags.extend(["base_plus", "base+", "b+", "hiera_b"])
+            else:
+                wanted_tags.extend(["large", "hiera_l"])
 
         for tag in wanted_tags:
             for candidate in candidates:
@@ -432,10 +531,39 @@ class SAMService:
                     return candidate
         return candidates[0]
 
+    def _resolve_sam2_model_cfg_candidates(
+        self,
+        *,
+        checkpoint: str,
+        checkpoint_path: str,
+        checkpoint_label: str,
+    ) -> list[str]:
+        override = os.getenv("SAM2_MODEL_CFG", "").strip() or os.getenv("SAM_MODEL_CFG", "").strip()
+        if override:
+            return [override]
+
+        checkpoint_name = Path(checkpoint_path).name if checkpoint_path else ""
+        combined = " ".join([str(checkpoint), str(checkpoint_label), str(checkpoint_name)]).casefold()
+        version = "sam2.1" if "2.1" in combined else "sam2"
+        suffix = "l"
+        if any(token in combined for token in ("tiny", "hiera_t", "_t")):
+            suffix = "t"
+        elif any(token in combined for token in ("small", "hiera_s", "_s")):
+            suffix = "s"
+        elif any(token in combined for token in ("base_plus", "base+", "b+", "hiera_b")):
+            suffix = "b+"
+
+        filename = f"{version}_hiera_{suffix}.yaml"
+        return [
+            f"configs/{version}/{filename}",
+            f"sam2/configs/{version}/{filename}",
+            filename,
+        ]
+
 
 def _select_mask_candidate(masks: Any, scores: Any) -> tuple[PILImage.Image, float | None]:
     if _np is None:
-        raise RuntimeError("numpy is required for SAM3 runtime")
+        raise RuntimeError("numpy is required for the SAM runtime")
 
     mask_array = _as_numpy(masks)
     score_array = _as_numpy(scores) if scores is not None else None
@@ -492,7 +620,8 @@ def _build_stub_mask(
     base_ry = box_height / 2.0
     curve = _checkpoint_curve_ratio(checkpoint)
 
-    vertex_count = 28 if multimask_output or "3.1" in checkpoint.casefold() else 18
+    lowered = checkpoint.casefold()
+    vertex_count = 28 if multimask_output or "3.1" in lowered or "2.1" in lowered else 18
     seed = sum(ord(ch) for ch in checkpoint) % 17
     polygon: list[tuple[float, float]] = []
     for index in range(vertex_count):
@@ -550,7 +679,8 @@ def _clamp(value: float, lower: float, upper: float) -> float:
 
 
 def _stub_score(points: list[SAMPoint], *, checkpoint: str, multimask_output: bool) -> float:
-    bonus = 0.06 if "3.1" in checkpoint.casefold() else 0.0
+    lowered = checkpoint.casefold()
+    bonus = 0.06 if "3.1" in lowered or "2.1" in lowered else 0.0
     bonus += 0.04 if multimask_output else 0.0
     bonus += min(0.12, len(points) * 0.02)
     return round(min(0.97, 0.72 + bonus), 4)

@@ -102,7 +102,7 @@ def test_project_settings_patch_returns_change_summary_and_metadata(client: Test
     assert invalid.status_code == 400
     assert "unknown settings key" in invalid.json()["message"]
 
-    runtime_invalid = client.patch(f"/api/projects/{project_id}/settings", json={"sam": {"checkpoint": "sam3.1"}})
+    runtime_invalid = client.patch(f"/api/projects/{project_id}/settings", json={"sam": {"checkpoint": "sam2.1"}})
     assert runtime_invalid.status_code == 400
     assert "/api/system/settings" in runtime_invalid.json()["message"]
 
@@ -118,7 +118,7 @@ def test_system_runtime_settings_patch_returns_change_summary_and_metadata(clien
         "/api/system/settings",
         json={
             "quality": {"threshold_review": 0.72},
-            "sam": {"checkpoint": "sam3.1"},
+            "sam": {"checkpoint": "sam2.1"},
         },
     )
     assert patch.status_code == 200
@@ -133,7 +133,7 @@ def test_system_runtime_settings_patch_returns_change_summary_and_metadata(clien
     assert after.status_code == 200
     after_payload = after.json()["data"]
     assert after_payload["quality"]["threshold_review"] == 0.72
-    assert after_payload["sam"]["checkpoint"] == "sam3.1"
+    assert after_payload["sam"]["checkpoint"] == "sam2.1"
 
 
 def test_system_profile_activation_updates_runtime_and_auto_project_defaults(profile_client):
@@ -168,7 +168,7 @@ def test_system_profile_activation_updates_runtime_and_auto_project_defaults(pro
     settings_payload = settings_resp.json()["data"]
     assert settings_payload["model_profile"] == "auto"
     assert settings_payload["llm"]["base_model"] == "qwen3-vl-8b"
-    assert settings_payload["sam"]["checkpoint"] == "sam3.1"
+    assert settings_payload["sam"]["checkpoint"] == "sam2.1"
     assert settings_payload["_meta"]["resolved_project_profile"] == "test_real_stack"
 
     patch = client.patch("/api/system/settings", json={"model_profile": "demo_prod"})
@@ -179,7 +179,7 @@ def test_system_profile_activation_updates_runtime_and_auto_project_defaults(pro
     assert demo_settings.status_code == 200
     demo_payload = demo_settings.json()["data"]
     assert demo_payload["llm"]["base_model"] == "qwen3-vl-8b"
-    assert demo_payload["sam"]["checkpoint"] == "sam3.1"
+    assert demo_payload["sam"]["checkpoint"] == "sam2.1"
     assert demo_payload["_meta"]["resolved_project_profile"] == "demo_prod"
 
 
@@ -194,7 +194,7 @@ def test_postprocess_and_quality_settings_affect_new_segmentation_predictions(cl
         "/api/system/settings",
         json={
             "quality": {"enable": False},
-            "sam": {"checkpoint": "sam3.1", "multimask_output": True},
+            "sam": {"checkpoint": "sam2.1", "multimask_output": True},
             "postprocess": {"enable_close": False, "enable_dp_simplify": False},
         },
     )
@@ -223,7 +223,7 @@ def test_postprocess_and_quality_settings_affect_new_segmentation_predictions(cl
                 "use_llm_confidence": True,
                 "use_sam_score": True,
             },
-            "sam": {"checkpoint": "sam3", "multimask_output": False},
+            "sam": {"checkpoint": "sam2", "multimask_output": False},
             "postprocess": {"enable_close": True, "enable_dp_simplify": True, "epsilon_ratio": 0.2},
         },
     )
