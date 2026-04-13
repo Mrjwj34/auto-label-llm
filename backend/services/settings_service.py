@@ -6,8 +6,13 @@ from typing import Any
 from backend.api import AppError
 from backend.config import DEFAULT_PROJECT_SETTINGS
 from backend.models.project import Project
+from backend.workflows.registry import (
+    get_workflow_definition,
+    list_available_workflows,
+    resolve_project_workflow,
+)
 
-PROJECT_EDITABLE_KEYS = ("labels",)
+PROJECT_EDITABLE_KEYS = ("labels", "workflow_key")
 SYSTEM_RUNTIME_KEYS = ("model_profile", "llm", "sam", "postprocess", "quality", "evaluation")
 
 HOT_RELOAD_PATHS = (
@@ -55,7 +60,11 @@ def build_project_settings_response(project: Project | None, stored: dict[str, A
     from backend.services.system_profiles import detect_active_profile
 
     merged = merged_project_settings(project, stored=stored)
+    workflow = resolve_project_workflow(project, project_settings=merged)
     payload = copy.deepcopy(merged)
+    payload["workflow_key"] = workflow.key
+    payload["task_family"] = workflow.task_family
+    payload["workflow"] = workflow.to_dict()
     payload["_meta"] = project_settings_metadata()
     payload["_meta"]["active_system_profile"] = detect_active_profile()
     payload["_meta"]["resolved_project_profile"] = resolve_project_profile_name(project, stored=stored)
@@ -115,6 +124,7 @@ def runtime_settings_metadata() -> dict[str, Any]:
 def project_settings_metadata() -> dict[str, Any]:
     return {
         "project_editable_paths": list(PROJECT_EDITABLE_KEYS),
+        "available_workflows": [workflow.to_dict() for workflow in list_available_workflows()],
         "note": "Project settings now keep project-specific data only. Runtime fields are configured globally via system settings.",
     }
 
@@ -122,6 +132,8 @@ def project_settings_metadata() -> dict[str, Any]:
 def _sanitize_root_value(key: str, value: Any) -> Any:
     if key == "labels":
         return _sanitize_labels(value)
+    if key == "workflow_key":
+        return _sanitize_workflow_key(value)
     if key == "model_profile":
         return _sanitize_model_profile(value)
     if key == "active_model_tag":
@@ -157,6 +169,11 @@ def _sanitize_labels(value: Any) -> list[str]:
         cleaned.append(label)
         seen.add(label)
     return cleaned
+
+
+def _sanitize_workflow_key(value: Any) -> str:
+    text = _sanitize_string(value, field_name="workflow_key", min_length=1, max_length=100)
+    return get_workflow_definition(text).key
 
 
 def _sanitize_model_profile(value: Any) -> str:

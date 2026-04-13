@@ -15,7 +15,7 @@ from backend.models.image import Image
 from backend.models.project import Project
 from backend.services.postprocess import apply_project_postprocess
 from backend.services.quality_service import refresh_image_quality
-from backend.services.project_settings import get_project_labels, load_project_settings
+from backend.services.project_settings import get_project_labels, get_project_workflow, load_project_settings
 from backend.services.sam_service import SAMService
 from backend.services.vllm_client import (
     GeneratedAnnotation,
@@ -140,7 +140,8 @@ def _attach_segmentation_shapes(
     *,
     project_settings: dict[str, Any],
 ) -> tuple[list[GeneratedAnnotation], dict[str, Any]]:
-    if project.task_type != "segmentation":
+    workflow = get_project_workflow(project, settings=project_settings)
+    if not workflow.has_capability("sam_refine"):
         return annotations, {
             "sam_calls": 0,
             "sam_ms": None,

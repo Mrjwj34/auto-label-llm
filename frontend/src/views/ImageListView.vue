@@ -145,9 +145,22 @@ type EvaluationComparison = {
 
 type ProjectSettingsMeta = {
   project_editable_paths: string[]
+  available_workflows: WorkflowDefinition[]
   active_system_profile: string
   resolved_project_profile: string
   note: string
+}
+
+type WorkflowDefinition = {
+  key: string
+  display_name: string
+  description: string
+  task_type: 'detection' | 'segmentation'
+  task_family: string
+  supports_auto_annotation: boolean
+  supports_manual_bbox: boolean
+  supports_point_refine: boolean
+  capabilities: string[]
 }
 
 type SettingsChange = {
@@ -253,6 +266,12 @@ const labelsText = ref('')
 const labelsSaving = ref(false)
 const projectLabels = computed(() => parseLabels(labelsText.value))
 const canStartAnnotate = computed(() => !loading.value && projectLabels.value.length > 0)
+const workflowKey = ref('generic_detection')
+const workflowSaving = ref(false)
+const availableProjectWorkflows = computed(() => settingsMeta.value?.available_workflows ?? [])
+const selectedWorkflow = computed(
+  () => availableProjectWorkflows.value.find((workflow) => workflow.key === workflowKey.value) ?? null,
+)
 const settingsSaving = ref(false)
 const settingsMessage = ref('')
 const settingsChange = ref<SettingsChange | null>(null)
@@ -559,6 +578,7 @@ async function fetchProjectSettings() {
     activeModelTag.value = String(data.active_model_tag ?? 'base')
     modelActivationTag.value = activeModelTag.value
     settingsMeta.value = (data._meta ?? null) as ProjectSettingsMeta | null
+    workflowKey.value = String(data.workflow_key ?? 'generic_detection')
 
     const labels = data.labels
     if (Array.isArray(labels)) {
@@ -708,6 +728,12 @@ async function saveLabels() {
   labelsSaving.value = true
   await patchProjectSettings({ labels: parseLabels(labelsText.value) })
   labelsSaving.value = false
+}
+
+async function saveWorkflowKey() {
+  workflowSaving.value = true
+  await patchProjectSettings({ workflow_key: workflowKey.value })
+  workflowSaving.value = false
 }
 
 async function patchProjectSettings(patch: Record<string, unknown>) {
@@ -1234,6 +1260,23 @@ watch(evaluationBaselineRunId, () => {
     </div>
 
     <div class="card">
+      <div class="row">
+        <label class="label">Workflow</label>
+        <select v-model="workflowKey" class="input" data-testid="workflow-key-select" :disabled="workflowSaving">
+          <option v-for="workflow in availableProjectWorkflows" :key="workflow.key" :value="workflow.key">
+            {{ workflow.display_name }} · {{ workflow.task_family }}
+          </option>
+        </select>
+        <button class="btn" data-testid="workflow-save-btn" type="button" :disabled="workflowSaving" @click="saveWorkflowKey">
+          {{ workflowSaving ? 'Saving...' : 'Save Workflow' }}
+        </button>
+      </div>
+      <div v-if="selectedWorkflow" class="hint">
+        workflow=<span class="mono">{{ selectedWorkflow.key }}</span>
+        · family=<span class="mono">{{ selectedWorkflow.task_family }}</span>
+        · point-refine=<span class="mono">{{ selectedWorkflow.supports_point_refine ? 'yes' : 'no' }}</span>
+      </div>
+      <div v-if="selectedWorkflow" class="hint">{{ selectedWorkflow.description }}</div>
       <div class="row">
         <label class="label">Labels</label>
         <input

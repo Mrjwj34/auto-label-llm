@@ -5,8 +5,9 @@ from typing import Any
 
 from backend.config import DEFAULT_PROJECT_SETTINGS, deep_merge
 from backend.models.project import Project
+from backend.workflows.registry import resolve_project_workflow, resolve_project_workflow_key
 
-PROJECT_SETTINGS_KEYS = ("labels", "active_model_tag")
+PROJECT_SETTINGS_KEYS = ("labels", "active_model_tag", "workflow_key")
 
 
 def load_stored_project_settings(project: Project | None) -> dict[str, Any]:
@@ -41,6 +42,16 @@ def merge_project_settings(stored: dict[str, Any] | None, project: Project | Non
 def load_project_settings(project: Project | None) -> dict[str, Any]:
     stored = load_stored_project_settings(project)
     return merge_project_settings(stored, project=project)
+
+
+def get_project_workflow_key(project: Project | None, *, settings: dict[str, Any] | None = None) -> str:
+    resolved_settings = settings or load_project_settings(project)
+    return resolve_project_workflow_key(project, project_settings=resolved_settings)
+
+
+def get_project_workflow(project: Project | None, *, settings: dict[str, Any] | None = None):
+    resolved_settings = settings or load_project_settings(project)
+    return resolve_project_workflow(project, project_settings=resolved_settings)
 
 
 def get_project_labels(project: Project | None) -> list[str]:

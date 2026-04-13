@@ -174,6 +174,9 @@ def test_stop_local_managed_vllm_marks_state_stopped(local_vllm_env: Path, monke
 
 
 def test_local_runtime_sync_boots_managed_service_and_loads_lora(monkeypatch: pytest.MonkeyPatch):
+    settings = get_settings().model_copy(deep=True)
+    settings.annotation_backend = "openai_compatible"
+    monkeypatch.setattr(vllm_client, "get_settings", lambda: settings)
     monkeypatch.setattr(vllm_client, "is_local_vllm_managed_for_settings", lambda settings: True)
     monkeypatch.setattr(
         vllm_client,

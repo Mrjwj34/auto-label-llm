@@ -20,7 +20,7 @@ from backend.models.annotation import Annotation
 from backend.models.image import Image
 from backend.models.project import Project
 from backend.services.postprocess import apply_project_postprocess
-from backend.services.project_settings import get_project_labels, load_project_settings
+from backend.services.project_settings import get_project_labels, get_project_workflow, load_project_settings
 from backend.services.quality_service import refresh_image_quality
 from backend.services.sam_service import SAMService
 from backend.tasks.task_manager import get_task_manager
@@ -291,6 +291,10 @@ def _interactive_sam_kwargs(project: Project | None) -> dict[str, Any]:
     return payload
 
 
+def _project_workflow(project: Project | None):
+    return get_project_workflow(project)
+
+
 @router.get("/images/{image_id}/annotations")
 def list_annotations(image_id: int, db: Session = Depends(get_db)):
     image = db.get(Image, image_id)
@@ -309,11 +313,12 @@ def create_annotation(image_id: int, payload: AnnotationCreateIn, db: Session = 
 
     project = db.get(Project, image.project_id)
     _validate_project_label(project, payload.label)
+    workflow = _project_workflow(project)
 
     polygon: list[list[float]] | None = None
     mask_path: str | None = None
     processed = None
-    if project is not None and project.task_type == "segmentation":
+    if project is not None and workflow.has_capability("sam_refine"):
         prediction = SAMService().predict_polygon(image, payload.bbox, **_project_sam_kwargs(project))
         processed = apply_project_postprocess(
             project,
@@ -352,6 +357,7 @@ def predict_annotation(image_id: int, payload: ImagePredictIn, db: Session = Dep
     project = db.get(Project, image.project_id)
     if project is None:
         raise AppError(404, "project not found")
+    workflow = _project_workflow(project)
 
     has_bbox = payload.bbox is not None
     has_points = payload.points is not None
@@ -376,7 +382,7 @@ def predict_annotation(image_id: int, payload: ImagePredictIn, db: Session = Dep
                 source="corrected",
                 is_confirmed=False,
             )
-            if project.task_type == "segmentation" and payload.bbox is not None:
+            if workflow.has_capability("sam_refine") and payload.bbox is not None:
                 prediction = SAMService().predict_polygon(image, payload.bbox, **_project_sam_kwargs(project))
                 processed = apply_project_postprocess(
                     project,
@@ -409,7 +415,7 @@ def predict_annotation(image_id: int, payload: ImagePredictIn, db: Session = Dep
         annotation.bbox = payload.bbox
         annotation.source = "corrected"
         annotation.is_confirmed = False
-        if project.task_type == "segmentation" and payload.bbox is not None:
+        if workflow.has_capability("sam_refine") and payload.bbox is not None:
             prediction = SAMService().predict_polygon(image, payload.bbox, **_project_sam_kwargs(project))
             processed = apply_project_postprocess(
                 project,
@@ -438,7 +444,7 @@ def predict_annotation(image_id: int, payload: ImagePredictIn, db: Session = Dep
 
     if annotation is None:
         raise AppError(400, "annotation_id is required for point correction")
-    if project.task_type != "segmentation":
+    if not workflow.supports_point_refine:
         raise AppError(400, "point correction is only available for segmentation projects")
 
     prediction = SAMService().refine_annotation(

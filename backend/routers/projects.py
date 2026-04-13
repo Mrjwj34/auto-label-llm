@@ -27,6 +27,12 @@ from backend.services.settings_service import (
 from backend.services.vllm_client import activate_project_model_tag, resolve_inference_route
 from backend.tasks.task_manager import get_task_manager
 from backend.utils.storage import delete_project_dirs, ensure_project_dirs
+from backend.workflows.registry import (
+    default_workflow_key_for_task_type,
+    list_available_workflows,
+    resolve_project_workflow,
+    validate_workflow_key_for_task_type,
+)
 
 
 router = APIRouter(prefix="/api", tags=["projects"])
@@ -35,6 +41,7 @@ router = APIRouter(prefix="/api", tags=["projects"])
 class ProjectCreateIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     task_type: Literal["detection", "segmentation"]
+    workflow_key: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 class ProjectOut(BaseModel):
@@ -54,7 +61,15 @@ class ProjectModelActivateIn(BaseModel):
 
 
 def _project_to_dict(p: Project) -> dict[str, Any]:
-    return {"id": p.id, "name": p.name, "task_type": p.task_type, "created_at": p.created_at}
+    workflow = resolve_project_workflow(p)
+    return {
+        "id": p.id,
+        "name": p.name,
+        "task_type": p.task_type,
+        "workflow_key": workflow.key,
+        "task_family": workflow.task_family,
+        "created_at": p.created_at,
+    }
 
 
 @router.get("/projects")
@@ -63,9 +78,34 @@ def list_projects(db: Session = Depends(get_db)):
     return ok([_project_to_dict(p) for p in projects])
 
 
+@router.get("/projects/meta")
+def get_project_meta():
+    workflows = [workflow.to_dict() for workflow in list_available_workflows()]
+    return ok(
+        {
+            "task_types": ["detection", "segmentation"],
+            "default_workflows": {
+                "detection": default_workflow_key_for_task_type("detection"),
+                "segmentation": default_workflow_key_for_task_type("segmentation"),
+            },
+            "workflows": workflows,
+        }
+    )
+
+
 @router.post("/projects")
 def create_project(payload: ProjectCreateIn, db: Session = Depends(get_db)):
-    project = Project(name=payload.name, task_type=payload.task_type, config=None)
+    workflow_key = payload.workflow_key or default_workflow_key_for_task_type(payload.task_type)
+    try:
+        workflow = validate_workflow_key_for_task_type(workflow_key, payload.task_type)
+    except ValueError as exc:
+        raise AppError(400, str(exc)) from exc
+
+    project = Project(
+        name=payload.name,
+        task_type=payload.task_type,
+        config=json.dumps({"workflow_key": workflow.key}, ensure_ascii=False),
+    )
     db.add(project)
     db.commit()
     db.refresh(project)
@@ -113,6 +153,12 @@ def patch_project_settings(
             merged[key] = {**merged[key], **value}
         else:
             merged[key] = value
+
+    workflow_key = str(merged.get("workflow_key") or default_workflow_key_for_task_type(project.task_type))
+    try:
+        validate_workflow_key_for_task_type(workflow_key, project.task_type)
+    except ValueError as exc:
+        raise AppError(400, str(exc)) from exc
 
     resolved_settings = merge_project_settings(merged, project=project)
     resolve_inference_route(

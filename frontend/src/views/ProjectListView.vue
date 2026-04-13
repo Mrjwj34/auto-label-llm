@@ -1,15 +1,35 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api/http'
 
 type TaskType = 'detection' | 'segmentation'
 
+type WorkflowDefinition = {
+  key: string
+  display_name: string
+  description: string
+  task_type: TaskType
+  task_family: string
+  supports_auto_annotation: boolean
+  supports_manual_bbox: boolean
+  supports_point_refine: boolean
+  capabilities: string[]
+}
+
 type Project = {
   id: number
   name: string
   task_type: TaskType
+  workflow_key: string
+  task_family: string
   created_at: string
+}
+
+type ProjectMeta = {
+  task_types: TaskType[]
+  default_workflows: Record<TaskType, string>
+  workflows: WorkflowDefinition[]
 }
 
 const router = useRouter()
@@ -17,11 +37,41 @@ const router = useRouter()
 const loading = ref(false)
 const error = ref<string>('')
 const projects = ref<Project[]>([])
+const projectMeta = ref<ProjectMeta | null>(null)
+const metaLoading = ref(false)
 
 const newName = ref('demo')
 const newTaskType = ref<TaskType>('detection')
+const newWorkflowKey = ref('generic_detection')
 
 const canCreate = computed(() => newName.value.trim().length > 0)
+const workflowOptions = computed(() =>
+  (projectMeta.value?.workflows ?? []).filter((workflow) => workflow.task_type === newTaskType.value),
+)
+const selectedWorkflow = computed(
+  () => workflowOptions.value.find((workflow) => workflow.key === newWorkflowKey.value) ?? workflowOptions.value[0] ?? null,
+)
+
+function syncWorkflowWithTaskType(taskType: TaskType) {
+  const defaults = projectMeta.value?.default_workflows
+  const available = (projectMeta.value?.workflows ?? []).filter((workflow) => workflow.task_type === taskType)
+  const current = available.find((workflow) => workflow.key === newWorkflowKey.value)
+  if (current) return
+  newWorkflowKey.value = defaults?.[taskType] ?? available[0]?.key ?? ''
+}
+
+async function fetchProjectMeta() {
+  metaLoading.value = true
+  try {
+    const resp = await api.get('/api/projects/meta')
+    projectMeta.value = resp.data?.data ?? null
+    syncWorkflowWithTaskType(newTaskType.value)
+  } catch (err: any) {
+    error.value = err?.message ? String(err.message) : String(err)
+  } finally {
+    metaLoading.value = false
+  }
+}
 
 async function fetchProjects() {
   loading.value = true
@@ -40,7 +90,11 @@ async function createProject() {
   if (!canCreate.value) return
   error.value = ''
   try {
-    await api.post('/api/projects', { name: newName.value.trim(), task_type: newTaskType.value })
+    await api.post('/api/projects', {
+      name: newName.value.trim(),
+      task_type: newTaskType.value,
+      workflow_key: newWorkflowKey.value || undefined,
+    })
     await fetchProjects()
   } catch (err: any) {
     error.value = err?.message ? String(err.message) : String(err)
@@ -63,7 +117,12 @@ function openProject(projectId: number) {
 }
 
 onMounted(() => {
+  void fetchProjectMeta()
   void fetchProjects()
+})
+
+watch(newTaskType, (taskType) => {
+  syncWorkflowWithTaskType(taskType)
 })
 </script>
 
@@ -89,6 +148,17 @@ onMounted(() => {
           <option value="segmentation">segmentation (mask/polygon)</option>
         </select>
       </div>
+      <div class="row">
+        <label class="label">工作流</label>
+        <select v-model="newWorkflowKey" class="input" data-testid="project-workflow-key" :disabled="metaLoading">
+          <option v-for="workflow in workflowOptions" :key="workflow.key" :value="workflow.key">
+            {{ workflow.display_name }} · {{ workflow.task_family }}
+          </option>
+        </select>
+      </div>
+      <div v-if="selectedWorkflow" class="subtle">
+        {{ selectedWorkflow.description }}
+      </div>
       <div class="actions">
         <button
           class="btn primary"
@@ -113,6 +183,11 @@ onMounted(() => {
             <span>#{{ p.id }}</span>
             <span class="dot">•</span>
             <span>{{ p.task_type }}</span>
+          </div>
+          <div class="meta">
+            <span class="mono">{{ p.workflow_key }}</span>
+            <span class="dot">•</span>
+            <span>{{ p.task_family }}</span>
           </div>
           <div class="meta muted">{{ p.created_at }}</div>
           <div class="item-actions">
@@ -143,6 +218,12 @@ onMounted(() => {
 .sub {
   opacity: 0.7;
   margin-top: 6px;
+}
+
+.subtle {
+  opacity: 0.72;
+  font-size: 13px;
+  margin-bottom: 10px;
 }
 
 .card {
@@ -215,6 +296,10 @@ onMounted(() => {
 
 .meta.muted {
   opacity: 0.6;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
 }
 
 .dot {
