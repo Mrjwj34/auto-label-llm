@@ -251,7 +251,7 @@ def test_qwen_array_payload_is_normalized_into_annotations():
         _extract_json_text(
             """```json
 [
-  {"label": "cat", "bbox": [12, 111, 497, 985], "confidence": 0.99},
+  {"label": "cat", "bbox_2d": [12, 111, 497, 985], "confidence": 0.99},
   {"label": "couch", "bbox": [0, 0, 1000, 1000], "confidence": 0.88}
 ]
 ```"""
@@ -264,6 +264,23 @@ def test_qwen_array_payload_is_normalized_into_annotations():
     assert annotations[0].label == "cat"
     assert annotations[0].bbox == [0.012, 0.111, 0.497, 0.985]
     assert annotations[0].confidence == 0.99
+    assert annotations[1].label == "couch"
+    assert annotations[1].bbox == [0.0, 0.0, 1.0, 1.0]
+
+
+def test_qwen_bbox_aliases_are_normalized_into_annotations():
+    payload = {
+        "objects": [
+            {"label": "cat", "box_2d": [20, 40, 220, 440], "confidence": 0.75},
+            {"label": "couch", "bounding_box": [0, 0, 1000, 1000], "confidence": 0.88},
+        ]
+    }
+
+    annotations = _normalize_response_payload(payload, ["cat", "couch"])
+
+    assert len(annotations) == 2
+    assert annotations[0].label == "cat"
+    assert annotations[0].bbox == [0.02, 0.04, 0.22, 0.44]
     assert annotations[1].label == "couch"
     assert annotations[1].bbox == [0.0, 0.0, 1.0, 1.0]
 

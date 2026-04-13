@@ -19,6 +19,13 @@
 
 **不是把系统直接改造成“万能插件平台”，而是先把“工作流决策层”从当前主流程中抽出来。**
 
+### 1.1 执行状态（2026-04-14）
+
+- Phase 1 已完成：后端已引入 `workflow registry`，并将现有检测/实例分割默认流程包装为 `generic_detection` 与 `generic_instance_segmentation` 两个内置 workflow。
+- Phase 2 已完成：项目创建、项目设置、项目列表与项目元信息接口均已支持 `workflow_key`，老项目缺失该字段时也会自动兼容映射。
+- 默认 workflow 已完成一轮真机验证，确认没有打坏真实 `LLM bbox -> SAM2 refine -> 导出/评估` 的默认闭环。
+- 当前不继续推进 Phase 3/4；后续若继续做 workflow 扩展，应优先补分割质量优化与更独立的真图评估样本，再进入新的 workflow 增长阶段。
+
 ---
 
 ## 2. 为什么现在要做这件事

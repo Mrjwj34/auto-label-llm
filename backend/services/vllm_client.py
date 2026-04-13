@@ -482,6 +482,13 @@ def _normalize_label(raw_label: Any, allowed_labels: list[str]) -> str | None:
     return allowed_map.get(cleaned.casefold())
 
 
+def _extract_raw_bbox(raw_object: dict[str, Any]) -> Any:
+    for key in ("bbox", "bbox_2d", "box_2d", "box", "bounding_box"):
+        if key in raw_object:
+            return raw_object.get(key)
+    return None
+
+
 def _dedupe_annotations(annotations: list[GeneratedAnnotation]) -> list[GeneratedAnnotation]:
     unique: list[GeneratedAnnotation] = []
     seen: set[tuple[str, tuple[float, float, float, float]]] = set()
@@ -532,7 +539,7 @@ def _normalize_response_payload(payload: Any, allowed_labels: list[str]) -> list
             continue
 
         label = _normalize_label(raw_object.get("label"), allowed_labels)
-        bbox = _canonicalize_bbox(raw_object.get("bbox"))
+        bbox = _canonicalize_bbox(_extract_raw_bbox(raw_object))
         if label is None or bbox is None:
             continue
 

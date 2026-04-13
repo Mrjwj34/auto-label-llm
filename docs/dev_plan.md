@@ -72,12 +72,20 @@
 | M14 | 真实 LoRA 微调闭环 | LLaMA-Factory 真训练 + LoRA 激活后真正参与推理 | 🟡 | - |
 | M15 | 评估系统增强与对比看板 | mask 指标、run 对比、失败案例分析、性能统计 | ✅ | - |
 | M16 | 一键启动与演示脚本 | 一条命令启动所有服务与外部依赖 | ✅ | - |
-| M17 | SAM3 → SAM2 迁移 | 分割链路切到更贴近当前需求的 SAM2 官方路线 | ⏳ | - |
-| M18 | 工作流系统重构（最小安全插件化） | 以 `workflow_key + task_family + atomic capabilities` 收敛流程编排，并先评估改动规模 | ⬜ | - |
+| M17 | SAM3 → SAM2 迁移 | 分割链路切到更贴近当前需求的 SAM2 官方路线 | ✅ | 9742036 |
+| M18 | 工作流系统重构（最小安全插件化） | 以 `workflow_key + task_family + atomic capabilities` 收敛流程编排，并先评估改动规模 | ✅ | b95edac / 506ca11 |
 | M19 | OCI 分发与环境自检 | Docker Hub 固定镜像 + Compose + 模型缓存 + doctor/selftest | ⬜ | - |
 | M20 | 前端完全重构 | 以正式产品形态重做前端架构、交互与视觉体系 | ⬜ | - |
 
 > 说明：原 M10 “一键启动与演示脚本”顺延为 M16。M10～M15 用于补齐当前实现与 `design_doc.md` 之间的差距，目标是最终与设计文档一致。M17～M20 为下一阶段主计划，依次收敛模型选型、工作流编排、分发方式与前端产品化。
+
+### 1.1 当前阶段收口结论（2026-04-14）
+
+- 本轮收口范围覆盖 `M17`、`M18` 与两条默认 workflow 的真实环境验收，目标是把“检测 / 实例分割默认闭环”从本地回归推进到真机可复现。
+- `M17` 以“完成 SAM2 迁移并稳定跑通默认分割链路”为验收口径，已经满足；真实 `SAM2` 自动分割、点修正、导出、评估均已在 `test_real_stack` 机器上跑通。
+- `M18` 以“完成最小安全插件化范围”为验收口径，已经满足；`workflow registry`、`workflow_key`、`task_family`、capability seam、老项目兼容映射与默认 workflow 元数据都已落地。
+- 当前闭环阶段正式收口，但这不等于“分割质量已经优化完成”；最新真图验证说明链路可用，`SAM2` 质量仍需在下一阶段继续优化提示方式、点提示策略、评估样本与后处理参数。
+- `M18` 的 Phase 3/4（前端以 workflow 为主入口、引入首个非默认 workflow）仍保留在后续阶段，不包含在本次收口范围内。
 
 ---
 
@@ -388,6 +396,11 @@
 **完成后的 git 操作**
 - `git commit -m "refactor: migrate segmentation runtime from sam3 to sam2"`
 
+**当前完成记录（2026-04-14）**
+- 本地关键回归覆盖 `SAMService`、分割 API、点修正、导入导出与评估链路，收口前回归通过。
+- 已在真实 GPU 机器上完成 `test_real_stack` 联调，验证 `SAM2` 权重下载、自动标注、点修正、mask 导出与评估闭环。
+- 该里程碑按“迁移完成且链路稳定”判定为完成；当前真图上的分割视觉质量一般，属于后续质量优化问题，不再阻塞 M17 收口。
+
 ---
 
 ### M18 — 工作流系统重构（最小安全插件化）
@@ -434,6 +447,12 @@
 **完成后的 git 操作**
 - 小改动直接落地时：`git commit -m "refactor: introduce workflow registry and task family seam"`
 - 若先做评估与设计文档：`git commit -m "docs: plan workflow refactor and plugin seam"`
+
+**当前完成记录（2026-04-14）**
+- `workflow registry`、`workflow_key`、`task_family` 与 `supports_point_refine` 等 workflow metadata 已接入后端默认流程。
+- 项目创建、项目设置、项目列表、项目元信息接口均已支持默认 workflow 的显式表达与兼容映射。
+- 默认 `generic_detection` 与 `generic_instance_segmentation` 两条 workflow 已通过本地回归和一次真机联调，证明“最小安全插件化”没有打坏既有闭环。
+- 本里程碑按 `docs/workflow_refactor_plan.md` 中 Phase 1/2 完成为准判定收口；Phase 3/4 留待下一阶段继续推进。
 
 ---
 
