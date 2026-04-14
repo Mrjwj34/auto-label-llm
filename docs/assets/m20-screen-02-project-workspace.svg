@@ -1,0 +1,100 @@
+<svg width="1600" height="980" viewBox="0 0 1600 980" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1600" height="980" fill="#F4F8FF"/>
+  <rect x="24" y="24" width="1552" height="932" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+
+  <rect x="24" y="24" width="1552" height="68" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="56" y="66" fill="#10233F" font-size="28" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="700">Building QA Batch 01</text>
+  <text x="420" y="66" fill="#5C6F8A" font-size="16" font-family="IBM Plex Mono, JetBrains Mono, monospace">generic_instance_segmentation</text>
+  <rect x="1320" y="40" width="108" height="34" fill="#0B5FFF"/>
+  <text x="1374" y="62" text-anchor="middle" fill="#FFFFFF" font-size="14" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="700">Refresh</text>
+  <rect x="1444" y="40" width="108" height="34" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="1498" y="62" text-anchor="middle" fill="#355277" font-size="14" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="600">Projects</text>
+
+  <rect x="24" y="92" width="1552" height="52" fill="#F7FAFF" stroke="#D8E3F1" stroke-width="2"/>
+  <rect x="40" y="104" width="112" height="28" fill="#0B5FFF"/>
+  <text x="96" y="123" text-anchor="middle" fill="#FFFFFF" font-size="13" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="700">Overview</text>
+  <text x="188" y="123" fill="#355277" font-size="15" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">Data</text>
+  <text x="260" y="123" fill="#355277" font-size="15" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">Annotate</text>
+  <text x="354" y="123" fill="#355277" font-size="15" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">Train</text>
+  <text x="428" y="123" fill="#355277" font-size="15" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">Evaluate</text>
+  <text x="520" y="123" fill="#355277" font-size="15" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">Settings</text>
+
+  <rect x="40" y="168" width="1132" height="64" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+  <rect x="56" y="184" width="116" height="32" fill="#0B5FFF"/>
+  <text x="114" y="205" text-anchor="middle" fill="#FFFFFF" font-size="13" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="700">Upload</text>
+  <rect x="184" y="184" width="140" height="32" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="254" y="205" text-anchor="middle" fill="#355277" font-size="13" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="600">Batch Annotate</text>
+  <rect x="336" y="184" width="116" height="32" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="394" y="205" text-anchor="middle" fill="#355277" font-size="13" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="600">Import ZIP</text>
+  <rect x="464" y="184" width="120" height="32" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="524" y="205" text-anchor="middle" fill="#355277" font-size="13" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="600">Export YOLO</text>
+  <rect x="596" y="184" width="120" height="32" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="656" y="205" text-anchor="middle" fill="#355277" font-size="13" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="600">Export COCO</text>
+  <text x="760" y="205" fill="#5C6F8A" font-size="14" font-family="IBM Plex Mono, JetBrains Mono, monospace">active_model=base</text>
+  <text x="958" y="205" fill="#5C6F8A" font-size="14" font-family="IBM Plex Mono, JetBrains Mono, monospace">labels=building,shed,rooftop</text>
+
+  <rect x="40" y="248" width="1132" height="84" fill="#10233F"/>
+  <text x="64" y="280" fill="#BFD3F6" font-size="13" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">TASK</text>
+  <text x="64" y="312" fill="#FFFFFF" font-size="20" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="700">project_annotate #7  RUNNING  67%</text>
+  <rect x="64" y="320" width="820" height="10" fill="#28415F"/>
+  <rect x="64" y="320" width="550" height="10" fill="#0B5FFF"/>
+  <text x="920" y="312" fill="#FFFFFF" font-size="14" font-family="IBM Plex Mono, JetBrains Mono, monospace">transport=websocket</text>
+  <text x="64" y="348" fill="#BFD3F6" font-size="14" font-family="IBM Plex Mono, JetBrains Mono, monospace">image 16/24  message=generated 4 polygons</text>
+
+  <rect x="40" y="356" width="832" height="568" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="64" y="392" fill="#10233F" font-size="24" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="700">Images</text>
+  <rect x="64" y="408" width="220" height="36" fill="#F7FAFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="88" y="431" fill="#7C90AF" font-size="14" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">Sort: review_queue</text>
+  <rect x="300" y="408" width="156" height="36" fill="#F7FAFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="324" y="431" fill="#7C90AF" font-size="14" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">Filter: all</text>
+
+  <rect x="64" y="468" width="232" height="184" fill="#F7FAFF" stroke="#D8E3F1" stroke-width="2"/>
+  <rect x="80" y="484" width="200" height="110" fill="#D6E4FA"/>
+  <text x="80" y="620" fill="#10233F" font-size="16" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="700">img_018.png</text>
+  <text x="80" y="642" fill="#5C6F8A" font-size="13" font-family="IBM Plex Mono, JetBrains Mono, monospace">status=done</text>
+  <text x="80" y="662" fill="#5C6F8A" font-size="13" font-family="IBM Plex Mono, JetBrains Mono, monospace">quality=0.42 split=train</text>
+
+  <rect x="320" y="468" width="232" height="184" fill="#F7FAFF" stroke="#D8E3F1" stroke-width="2"/>
+  <rect x="336" y="484" width="200" height="110" fill="#D6E4FA"/>
+  <text x="336" y="620" fill="#10233F" font-size="16" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="700">img_017.png</text>
+  <text x="336" y="642" fill="#5C6F8A" font-size="13" font-family="IBM Plex Mono, JetBrains Mono, monospace">status=annotating</text>
+  <text x="336" y="662" fill="#5C6F8A" font-size="13" font-family="IBM Plex Mono, JetBrains Mono, monospace">quality=0.57 split=train</text>
+
+  <rect x="576" y="468" width="232" height="184" fill="#F7FAFF" stroke="#D8E3F1" stroke-width="2"/>
+  <rect x="592" y="484" width="200" height="110" fill="#D6E4FA"/>
+  <text x="592" y="620" fill="#10233F" font-size="16" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="700">img_016.png</text>
+  <text x="592" y="642" fill="#5C6F8A" font-size="13" font-family="IBM Plex Mono, JetBrains Mono, monospace">status=pending</text>
+  <text x="592" y="662" fill="#5C6F8A" font-size="13" font-family="IBM Plex Mono, JetBrains Mono, monospace">quality=-- split=val</text>
+
+  <rect x="64" y="676" width="744" height="220" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="88" y="712" fill="#10233F" font-size="20" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="700">Dataset</text>
+  <rect x="88" y="734" width="128" height="32" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="152" y="755" text-anchor="middle" fill="#355277" font-size="13" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="600">Import ZIP</text>
+  <rect x="228" y="734" width="128" height="32" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="292" y="755" text-anchor="middle" fill="#355277" font-size="13" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="600">Export YOLO</text>
+  <rect x="368" y="734" width="128" height="32" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="432" y="755" text-anchor="middle" fill="#355277" font-size="13" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="600">Export COCO</text>
+  <text x="88" y="804" fill="#5C6F8A" font-size="14" font-family="IBM Plex Mono, JetBrains Mono, monospace">confirmed_only=true</text>
+  <text x="88" y="834" fill="#5C6F8A" font-size="14" font-family="IBM Plex Mono, JetBrains Mono, monospace">last_import=2026-04-14 09:32</text>
+  <text x="88" y="864" fill="#5C6F8A" font-size="14" font-family="IBM Plex Mono, JetBrains Mono, monospace">last_export=project_12_yolo.zip</text>
+
+  <rect x="896" y="356" width="656" height="270" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="920" y="392" fill="#10233F" font-size="24" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="700">Review Queue</text>
+  <rect x="920" y="418" width="608" height="44" fill="#F7FAFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="944" y="446" fill="#10233F" font-size="15" font-family="IBM Plex Mono, JetBrains Mono, monospace">#18 img_018.png  quality=0.42  polygons=4  source=auto</text>
+  <rect x="920" y="470" width="608" height="44" fill="#F7FAFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="944" y="498" fill="#10233F" font-size="15" font-family="IBM Plex Mono, JetBrains Mono, monospace">#14 img_014.png  quality=0.51  polygons=3  source=auto</text>
+  <rect x="920" y="522" width="608" height="44" fill="#F7FAFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="944" y="550" fill="#10233F" font-size="15" font-family="IBM Plex Mono, JetBrains Mono, monospace">#06 img_006.png  quality=0.58  polygons=2  fallback=true</text>
+
+  <rect x="896" y="650" width="656" height="274" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="920" y="686" fill="#10233F" font-size="24" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="700">Summary</text>
+  <text x="920" y="728" fill="#5C6F8A" font-size="14" font-family="IBM Plex Mono, JetBrains Mono, monospace">images=128</text>
+  <text x="920" y="756" fill="#5C6F8A" font-size="14" font-family="IBM Plex Mono, JetBrains Mono, monospace">review_queue=9</text>
+  <text x="920" y="784" fill="#5C6F8A" font-size="14" font-family="IBM Plex Mono, JetBrains Mono, monospace">profile=test_real_stack</text>
+  <text x="920" y="812" fill="#5C6F8A" font-size="14" font-family="IBM Plex Mono, JetBrains Mono, monospace">active_model=base</text>
+  <text x="920" y="840" fill="#5C6F8A" font-size="14" font-family="IBM Plex Mono, JetBrains Mono, monospace">latest_eval_dice=0.78</text>
+  <text x="920" y="868" fill="#5C6F8A" font-size="14" font-family="IBM Plex Mono, JetBrains Mono, monospace">latest_finetune=lora:4</text>
+  <rect x="920" y="884" width="168" height="28" fill="#0B5FFF"/>
+  <text x="1004" y="903" text-anchor="middle" fill="#FFFFFF" font-size="13" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="700">Open Annotate</text>
+</svg>

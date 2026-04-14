@@ -1,0 +1,106 @@
+<svg width="1600" height="980" viewBox="0 0 1600 980" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1600" height="980" fill="#F4F8FF"/>
+  <rect x="24" y="24" width="1552" height="932" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+
+  <rect x="24" y="24" width="220" height="932" fill="#F7FAFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="56" y="72" fill="#10233F" font-size="28" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="700">Auto Label</text>
+  <text x="56" y="110" fill="#5C6F8A" font-size="16" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">Projects</text>
+
+  <rect x="40" y="148" width="188" height="44" fill="#0B5FFF"/>
+  <text x="64" y="176" fill="#FFFFFF" font-size="18" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="600">Projects</text>
+  <text x="64" y="230" fill="#355277" font-size="18" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">Runtime</text>
+  <text x="64" y="272" fill="#355277" font-size="18" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">Diagnostics</text>
+
+  <text x="56" y="356" fill="#7C90AF" font-size="12" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" letter-spacing="1">WORKFLOWS</text>
+  <text x="56" y="392" fill="#10233F" font-size="16" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">generic_detection</text>
+  <text x="56" y="430" fill="#10233F" font-size="16" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">generic_instance_segmentation</text>
+
+  <text x="276" y="72" fill="#10233F" font-size="34" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="700">Projects</text>
+
+  <rect x="276" y="100" width="720" height="48" fill="#F7FAFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="300" y="131" fill="#7C90AF" font-size="16" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">Search project / workflow / model</text>
+
+  <rect x="1012" y="100" width="156" height="48" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="1062" y="131" text-anchor="middle" fill="#355277" font-size="16" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="600">All workflows</text>
+
+  <rect x="1184" y="100" width="164" height="48" fill="#0B5FFF"/>
+  <text x="1266" y="131" text-anchor="middle" fill="#FFFFFF" font-size="16" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="700">New Project</text>
+
+  <rect x="276" y="176" width="1060" height="84" fill="#F7FAFF" stroke="#D8E3F1" stroke-width="2"/>
+  <rect x="300" y="200" width="160" height="36" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="324" y="223" fill="#5C6F8A" font-size="14" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">Projects</text>
+  <text x="420" y="223" fill="#10233F" font-size="14" font-family="IBM Plex Mono, JetBrains Mono, monospace" font-weight="700">18</text>
+  <rect x="476" y="200" width="160" height="36" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="500" y="223" fill="#5C6F8A" font-size="14" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">Review Queue</text>
+  <text x="620" y="223" fill="#10233F" font-size="14" font-family="IBM Plex Mono, JetBrains Mono, monospace" font-weight="700">34</text>
+  <rect x="652" y="200" width="160" height="36" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="676" y="223" fill="#5C6F8A" font-size="14" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">Running</text>
+  <text x="772" y="223" fill="#10233F" font-size="14" font-family="IBM Plex Mono, JetBrains Mono, monospace" font-weight="700">3</text>
+  <rect x="828" y="200" width="188" height="36" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="852" y="223" fill="#5C6F8A" font-size="14" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">Segmentation</text>
+  <text x="980" y="223" fill="#10233F" font-size="14" font-family="IBM Plex Mono, JetBrains Mono, monospace" font-weight="700">8</text>
+
+  <rect x="276" y="292" width="1060" height="60" fill="#0F1B2A"/>
+  <text x="304" y="330" fill="#D7E4FF" font-size="14" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">Project</text>
+  <text x="528" y="330" fill="#D7E4FF" font-size="14" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">Workflow</text>
+  <text x="770" y="330" fill="#D7E4FF" font-size="14" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">Family</text>
+  <text x="892" y="330" fill="#D7E4FF" font-size="14" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">Images</text>
+  <text x="992" y="330" fill="#D7E4FF" font-size="14" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">Review</text>
+  <text x="1094" y="330" fill="#D7E4FF" font-size="14" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">Model</text>
+  <text x="1202" y="330" fill="#D7E4FF" font-size="14" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">Last Task</text>
+
+  <rect x="276" y="352" width="1060" height="76" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="304" y="398" fill="#10233F" font-size="18" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="700">Road Defect Detect</text>
+  <text x="528" y="398" fill="#10233F" font-size="16" font-family="IBM Plex Mono, JetBrains Mono, monospace">generic_detection</text>
+  <text x="770" y="398" fill="#355277" font-size="16" font-family="IBM Plex Mono, JetBrains Mono, monospace">bbox</text>
+  <text x="892" y="398" fill="#10233F" font-size="16" font-family="IBM Plex Mono, JetBrains Mono, monospace">240</text>
+  <text x="992" y="398" fill="#10233F" font-size="16" font-family="IBM Plex Mono, JetBrains Mono, monospace">16</text>
+  <text x="1094" y="398" fill="#10233F" font-size="16" font-family="IBM Plex Mono, JetBrains Mono, monospace">base</text>
+  <text x="1202" y="398" fill="#10233F" font-size="16" font-family="IBM Plex Mono, JetBrains Mono, monospace">SUCCESS</text>
+
+  <rect x="276" y="428" width="1060" height="76" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="304" y="474" fill="#10233F" font-size="18" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="700">Building Footprint Segment</text>
+  <text x="528" y="474" fill="#10233F" font-size="16" font-family="IBM Plex Mono, JetBrains Mono, monospace">generic_instance_segmentation</text>
+  <text x="770" y="474" fill="#355277" font-size="16" font-family="IBM Plex Mono, JetBrains Mono, monospace">instance_mask</text>
+  <text x="892" y="474" fill="#10233F" font-size="16" font-family="IBM Plex Mono, JetBrains Mono, monospace">128</text>
+  <text x="992" y="474" fill="#10233F" font-size="16" font-family="IBM Plex Mono, JetBrains Mono, monospace">9</text>
+  <text x="1094" y="474" fill="#10233F" font-size="16" font-family="IBM Plex Mono, JetBrains Mono, monospace">lora:4</text>
+  <text x="1202" y="474" fill="#10233F" font-size="16" font-family="IBM Plex Mono, JetBrains Mono, monospace">RUNNING</text>
+
+  <rect x="276" y="504" width="1060" height="76" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="304" y="550" fill="#10233F" font-size="18" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="700">Inspection Demo</text>
+  <text x="528" y="550" fill="#10233F" font-size="16" font-family="IBM Plex Mono, JetBrains Mono, monospace">generic_detection</text>
+  <text x="770" y="550" fill="#355277" font-size="16" font-family="IBM Plex Mono, JetBrains Mono, monospace">bbox</text>
+  <text x="892" y="550" fill="#10233F" font-size="16" font-family="IBM Plex Mono, JetBrains Mono, monospace">76</text>
+  <text x="992" y="550" fill="#10233F" font-size="16" font-family="IBM Plex Mono, JetBrains Mono, monospace">5</text>
+  <text x="1094" y="550" fill="#10233F" font-size="16" font-family="IBM Plex Mono, JetBrains Mono, monospace">base</text>
+  <text x="1202" y="550" fill="#10233F" font-size="16" font-family="IBM Plex Mono, JetBrains Mono, monospace">FAILED</text>
+
+  <rect x="1360" y="24" width="216" height="932" fill="#F7FAFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="1388" y="72" fill="#10233F" font-size="26" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="700">New Project</text>
+
+  <text x="1388" y="122" fill="#5C6F8A" font-size="13" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">WORKFLOW</text>
+  <rect x="1388" y="136" width="160" height="40" fill="#0B5FFF"/>
+  <text x="1468" y="161" text-anchor="middle" fill="#FFFFFF" font-size="14" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="700">Instance Segmentation</text>
+  <rect x="1388" y="184" width="160" height="40" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="1468" y="209" text-anchor="middle" fill="#355277" font-size="14" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="600">Detection</text>
+
+  <text x="1388" y="266" fill="#5C6F8A" font-size="13" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">NAME</text>
+  <rect x="1388" y="280" width="160" height="40" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="1404" y="305" fill="#10233F" font-size="14" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">Building QA Batch 01</text>
+
+  <text x="1388" y="362" fill="#5C6F8A" font-size="13" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">LABELS</text>
+  <rect x="1388" y="376" width="160" height="72" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="1404" y="402" fill="#10233F" font-size="14" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">building</text>
+  <text x="1404" y="426" fill="#10233F" font-size="14" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">shed</text>
+
+  <text x="1388" y="490" fill="#5C6F8A" font-size="13" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif">CAPABILITIES</text>
+  <rect x="1388" y="504" width="160" height="120" fill="#FFFFFF" stroke="#D8E3F1" stroke-width="2"/>
+  <text x="1404" y="530" fill="#10233F" font-size="14" font-family="IBM Plex Mono, JetBrains Mono, monospace">AUTO         ON</text>
+  <text x="1404" y="556" fill="#10233F" font-size="14" font-family="IBM Plex Mono, JetBrains Mono, monospace">BBOX         ON</text>
+  <text x="1404" y="582" fill="#10233F" font-size="14" font-family="IBM Plex Mono, JetBrains Mono, monospace">POINT        ON</text>
+  <text x="1404" y="608" fill="#10233F" font-size="14" font-family="IBM Plex Mono, JetBrains Mono, monospace">EXPORT       ON</text>
+
+  <rect x="1388" y="656" width="160" height="44" fill="#0B5FFF"/>
+  <text x="1468" y="683" text-anchor="middle" fill="#FFFFFF" font-size="16" font-family="IBM Plex Sans, PingFang SC, Noto Sans SC, sans-serif" font-weight="700">Create</text>
+</svg>
