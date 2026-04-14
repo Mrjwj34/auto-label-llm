@@ -303,6 +303,8 @@ watch(
         <button @click="hydrate">刷新</button>
         <button :disabled="!studioStore.previousImageId()" @click="goPreviousImage">上一张</button>
         <button :disabled="!studioStore.nextImageId()" @click="goNextImage">下一张</button>
+        <button :disabled="!studioStore.selectedAnnotationId" @click="studioStore.deleteSelected">删除</button>
+        <button class="primary" :disabled="!studioStore.selectedAnnotationId" @click="confirmSelected">确认</button>
       </template>
 
       <div v-if="error" class="annotate-error">{{ error }}</div>
@@ -418,9 +420,6 @@ watch(
 
       <SectionPanel class="annotate-column">
         <template #header><strong>当前标注</strong></template>
-        <template #actions>
-          <span class="mono">{{ studioStore.image?.annotations.length ?? 0 }}</span>
-        </template>
 
         <div v-if="(studioStore.image?.annotations.length ?? 0) === 0" class="annotate-empty">当前图片还没有标注</div>
 
@@ -430,11 +429,6 @@ watch(
               {{ annotationOptionText(annotation.id) }}
             </option>
           </select>
-
-          <div class="annotate-side-actions">
-            <button :disabled="!studioStore.selectedAnnotationId" @click="studioStore.deleteSelected">删除</button>
-            <button class="primary" :disabled="!studioStore.selectedAnnotationId" @click="confirmSelected">确认</button>
-          </div>
         </div>
       </SectionPanel>
     </aside>
@@ -460,8 +454,14 @@ watch(
 
 .annotate-sidebar {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: 168px minmax(0, 1fr) 112px;
   gap: 16px;
+  min-height: 0;
+}
+
+.annotate-column {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
 }
 
@@ -474,9 +474,13 @@ watch(
 .annotate-queue-item {
   display: grid;
   gap: 6px;
+  height: 88px;
+  align-content: start;
   border: 1px solid var(--line);
   background: var(--panel-soft);
+  padding: 12px;
   text-align: left;
+  overflow: hidden;
 }
 
 .annotate-queue-item.active {
@@ -496,6 +500,12 @@ watch(
 .annotate-stage-panel :deep(.section-panel-body) {
   display: grid;
   gap: 12px;
+  height: 100%;
+  min-height: 0;
+}
+
+.annotate-column :deep(.section-panel-body) {
+  display: grid;
   height: 100%;
   min-height: 0;
 }
@@ -570,6 +580,8 @@ watch(
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+  height: 100%;
+  align-content: start;
 }
 
 .annotate-focus-item {
@@ -595,18 +607,25 @@ watch(
   min-height: 0;
 }
 
-.annotate-side-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
 .annotate-queue {
+  align-content: start;
   height: 100%;
+  grid-auto-rows: 88px;
   min-height: 0;
   overflow-y: auto;
   padding-right: 4px;
   scrollbar-gutter: stable;
+}
+
+.annotate-queue-item strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.annotate-selection-panel {
+  height: 100%;
+  align-content: start;
 }
 
 .annotate-error {
@@ -629,10 +648,6 @@ watch(
   }
 
   .annotate-focus-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .annotate-side-actions {
     grid-template-columns: 1fr;
   }
 }
