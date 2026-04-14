@@ -40,35 +40,40 @@ function isActive(key: ProjectTabKey): boolean {
 <style scoped>
 .project-tabs {
   display: flex;
-  gap: 2px;
+  flex-wrap: wrap;
+  gap: 0;
   border-bottom: 1px solid var(--line);
-  overflow-x: auto;
+  overflow: clip;
+  align-items: flex-end;
 }
 
 .project-tab {
   position: relative;
-  padding: 14px 16px;
+  padding: 12px 14px 14px;
   color: var(--text-soft);
   text-decoration: none;
   white-space: nowrap;
-  transition: color 160ms ease;
+  transition:
+    color 160ms ease,
+    background-color 160ms ease;
 }
 
 .project-tab::after {
   position: absolute;
-  right: 12px;
+  right: 10px;
   bottom: -1px;
-  left: 12px;
-  height: 2px;
+  left: 10px;
+  height: 3px;
   background: var(--accent);
   transform: scaleX(0);
   transform-origin: center;
-  transition: transform 160ms ease;
+  transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
   content: '';
 }
 
 .project-tab:hover {
   color: var(--text-strong);
+  background: rgba(11, 95, 255, 0.05);
 }
 
 .project-tab.active {

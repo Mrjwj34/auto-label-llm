@@ -58,7 +58,7 @@ function taskStatusTone(status: string): 'neutral' | 'warning' | 'success' | 'da
     <header class="page-header">
       <div>
         <h1 class="page-title">项目</h1>
-        <div class="page-meta mono">项目={{ projectStore.projects.length }} 工作流={{ projectStore.workflows.length }}</div>
+        <div class="page-meta">项目={{ projectStore.projects.length }} 工作流={{ projectStore.workflows.length }}</div>
       </div>
       <div class="projects-header-actions">
         <button @click="projectStore.loadProjects">刷新</button>
@@ -83,7 +83,7 @@ function taskStatusTone(status: string): 'neutral' | 'warning' | 'success' | 'da
       <template #header><strong>项目列表</strong></template>
       <div class="projects-table-scroll">
         <div class="projects-table">
-          <div class="projects-table-head mono">
+          <div class="projects-table-head">
             <span>项目</span>
             <span>工作流</span>
             <span>任务族</span>
@@ -102,7 +102,7 @@ function taskStatusTone(status: string): 'neutral' | 'warning' | 'success' | 'da
               <span>{{ workflowDisplayName(project.workflowKey) }}</span>
               <span class="mono">{{ taskFamilyText(project.taskFamily) }}</span>
               <span class="mono">{{ project.activeModelTag }}</span>
-              <StatusChip :label="taskStatusText(project.lastTaskStatus)" :tone="taskStatusTone(project.lastTaskStatus)" />
+              <StatusChip :label="taskStatusText(project.lastTaskStatus)" :tone="taskStatusTone(project.lastTaskStatus)" compact />
               <span class="mono">{{ project.createdAt }}</span>
             </button>
           </transition-group>
@@ -159,10 +159,10 @@ function taskStatusTone(status: string): 'neutral' | 'warning' | 'success' | 'da
                   </div>
                 </div>
 
-                <label class="projects-form-row projects-form-row-wide">
+                <div class="projects-form-row projects-form-row-wide">
                   <span>标签</span>
                   <LabelListEditor v-model="projectStore.createDraft.labels" placeholder="输入标签，例如：裂缝、剥落、锈蚀" />
-                </label>
+                </div>
               </div>
             </section>
           </div>
@@ -200,7 +200,7 @@ function taskStatusTone(status: string): 'neutral' | 'warning' | 'success' | 'da
 }
 
 .projects-table {
-  --projects-columns: minmax(220px, 1.8fr) minmax(180px, 1.2fr) minmax(120px, 0.8fr) minmax(120px, 0.9fr) minmax(120px, 0.9fr) minmax(180px, 1fr);
+  --projects-columns: minmax(220px, 1.8fr) minmax(180px, 1.2fr) minmax(120px, 0.8fr) minmax(120px, 0.9fr) minmax(92px, 0.72fr) minmax(180px, 1fr);
   min-width: 940px;
 }
 
@@ -241,6 +241,10 @@ function taskStatusTone(status: string): 'neutral' | 'warning' | 'success' | 'da
 .projects-name {
   color: var(--text-strong);
   font-weight: 700;
+}
+
+.projects-row :deep(.status-chip) {
+  justify-self: start;
 }
 
 .projects-empty {

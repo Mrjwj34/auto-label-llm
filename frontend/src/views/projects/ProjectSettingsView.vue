@@ -118,10 +118,10 @@ async function saveProjectSettings() {
           </select>
         </label>
 
-        <label class="project-form-row project-form-row-wide">
+        <div class="project-form-row project-form-row-wide">
           <span>标签</span>
           <LabelListEditor v-model="labels" placeholder="输入标签后按回车" />
-        </label>
+        </div>
       </div>
 
       <div v-if="feedbackMessage || projectStore.settingsChange" class="settings-change">

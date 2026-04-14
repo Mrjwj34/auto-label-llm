@@ -15,7 +15,7 @@ const draft = ref('')
 
 function normalizeLabels(input: string): string[] {
   return input
-    .split(/[\n,，]/)
+    .split(/[\n,，/]+/)
     .map((item) => item.trim())
     .filter(Boolean)
 }
@@ -53,14 +53,16 @@ function handleKeydown(event: KeyboardEvent) {
 <template>
   <div class="label-editor">
     <div v-if="modelValue.length > 0" class="label-editor-list">
-      <button v-for="label in modelValue" :key="label" class="label-chip" type="button" @click="removeLabel(label)">
+      <div v-for="label in modelValue" :key="label" class="label-chip">
         <span>{{ label }}</span>
-        <strong aria-hidden="true">×</strong>
-      </button>
+        <button type="button" class="label-chip-remove" aria-label="删除标签" @click.stop="removeLabel(label)">
+          ×
+        </button>
+      </div>
     </div>
 
     <div class="label-editor-input">
-      <input v-model="draft" :placeholder="placeholder ?? '输入一个标签后按回车'" @keydown="handleKeydown" />
+      <input v-model="draft" :placeholder="placeholder ?? '输入标签后按回车'" @keydown="handleKeydown" />
       <button type="button" @click="addDraftLabel">添加标签</button>
     </div>
 
@@ -81,13 +83,40 @@ function handleKeydown(event: KeyboardEvent) {
 }
 
 .label-chip {
+  position: relative;
   display: inline-flex;
+  min-width: 0;
   align-items: center;
-  gap: 8px;
-  border-color: var(--accent);
+  border: 1px solid var(--accent);
   background: var(--accent-soft);
   color: var(--accent);
-  padding: 6px 10px;
+  padding: 6px 30px 6px 10px;
+}
+
+.label-chip span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.label-chip-remove {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  display: inline-grid;
+  width: 14px;
+  height: 14px;
+  place-items: center;
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  line-height: 1;
+}
+
+.label-chip-remove:hover {
+  background: rgba(11, 95, 255, 0.08);
 }
 
 .label-editor-input {

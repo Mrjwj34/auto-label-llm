@@ -169,7 +169,7 @@ async function saveSystemSettings() {
     <header class="page-header">
       <div>
         <h1 class="page-title">全局设置</h1>
-        <div class="page-meta mono">active-profile={{ systemStore.systemConfig?.activeProfile ?? '-' }}</div>
+        <div class="page-meta">active-profile={{ systemStore.systemConfig?.activeProfile ?? '-' }}</div>
       </div>
       <div>
         <button class="primary" :disabled="systemStore.saving" @click="saveSystemSettings">保存全局设置</button>

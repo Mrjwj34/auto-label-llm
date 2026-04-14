@@ -21,14 +21,12 @@
   overflow: hidden;
   transition:
     border-color 220ms ease,
-    background-color 220ms ease,
-    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+    background-color 220ms ease;
   animation: section-panel-enter 280ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .section-panel:hover {
   border-color: #b8cbe3;
-  transform: translateY(-2px);
 }
 
 .section-panel-head {

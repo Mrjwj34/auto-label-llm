@@ -28,29 +28,67 @@ watch(projectId, (nextProjectId) => {
 </script>
 
 <template>
-  <div class="page-frame">
+  <div class="page-frame project-layout-frame">
     <header class="page-header">
       <div>
         <h1 class="page-title">{{ projectStore.currentProject?.name ?? '项目' }}</h1>
-        <div class="page-meta mono">
+        <div class="page-meta">
           工作流={{ currentWorkflowName }}
           workflow key={{ projectStore.currentProject?.workflowKey ?? '-' }}
-          任务族={{ taskFamilyText(projectStore.currentProject?.taskFamily ?? '-') }} 创建时间={{ projectStore.currentProject?.createdAt ?? '-' }}
+          任务族={{ taskFamilyText(projectStore.currentProject?.taskFamily ?? '-') }}
+          创建时间={{ projectStore.currentProject?.createdAt ?? '-' }}
         </div>
       </div>
+
       <div class="project-layout-meta">
-        <span class="project-layout-base mono">基础模型={{ systemStore.systemSettings?.llm.baseModel ?? '-' }}</span>
+        <span class="project-layout-base">基础模型={{ systemStore.systemSettings?.llm.baseModel ?? '-' }}</span>
         <StatusChip :label="`激活版本 ${projectStore.settings?.activeModelTag ?? 'base'}`" tone="accent" />
       </div>
     </header>
 
     <ProjectTabs v-if="projectStore.currentProject" :project-id="projectStore.currentProject.id" />
 
-    <router-view />
+    <div class="project-layout-content">
+      <router-view />
+    </div>
   </div>
 </template>
 
 <style scoped>
+.project-layout-frame {
+  min-width: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  align-content: start;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 12px;
+  padding-bottom: 0;
+}
+
+.project-layout-content {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  grid-template-rows: minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.page-header {
+  gap: 16px;
+}
+
+.page-title {
+  font-size: clamp(28px, 3vw, 40px);
+}
+
+.page-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+
 .project-layout-meta {
   display: flex;
   align-items: center;

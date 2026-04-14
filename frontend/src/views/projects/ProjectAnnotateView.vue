@@ -20,7 +20,9 @@ const imageId = computed(() => {
 
 const selectedLabel = ref('')
 const error = ref('')
+const stageViewportRef = ref<HTMLDivElement | null>(null)
 const stageRef = ref<HTMLDivElement | null>(null)
+const stageViewportSize = reactive({ width: 0, height: 0 })
 const stageSize = reactive({ width: 0, height: 0 })
 
 const drawing = reactive({
@@ -36,16 +38,38 @@ const drawing = reactive({
 let resizeObserver: ResizeObserver | null = null
 
 const projectLabels = computed(() => projectStore.settings?.labels ?? [])
+const imageAnnotations = computed(() => studioStore.image?.annotations ?? [])
+const hasAnnotations = computed(() => imageAnnotations.value.length > 0)
+const currentQueueItem = computed(() => studioStore.queue.find((item) => item.imageId === studioStore.image?.id))
 const selectedAnnotationId = computed({
-  get: () => studioStore.selectedAnnotationId,
+  get: () => studioStore.selectedAnnotationId || 0,
   set: (value: number | string) => {
-    studioStore.selectAnnotation(Number(value))
+    const nextValue = Number(value)
+    studioStore.selectAnnotation(Number.isFinite(nextValue) ? nextValue : 0)
   },
 })
-const stageAspectRatio = computed(() => {
+const stageCanvasStyle = computed(() => {
   const width = studioStore.image?.width ?? 16
   const height = studioStore.image?.height ?? 9
-  return { aspectRatio: `${width} / ${height}` }
+  const viewportWidth = stageViewportSize.width
+  const viewportHeight = stageViewportSize.height
+
+  if (!viewportWidth || !viewportHeight) {
+    return {
+      width: '100%',
+      maxWidth: '100%',
+      maxHeight: '100%',
+      aspectRatio: `${width} / ${height}`,
+    }
+  }
+
+  const scale = Math.min(viewportWidth / width, viewportHeight / height)
+
+  return {
+    width: `${Math.max(1, Math.floor(width * scale))}px`,
+    height: `${Math.max(1, Math.floor(height * scale))}px`,
+    aspectRatio: `${width} / ${height}`,
+  }
 })
 
 const draftBbox = computed<[number, number, number, number] | null>(() => {
@@ -72,6 +96,14 @@ function updateStageSize() {
   const rect = stage.getBoundingClientRect()
   stageSize.width = rect.width
   stageSize.height = rect.height
+}
+
+function updateStageViewportSize() {
+  const viewport = stageViewportRef.value
+  if (!viewport) return
+  const rect = viewport.getBoundingClientRect()
+  stageViewportSize.width = rect.width
+  stageViewportSize.height = rect.height
 }
 
 function openImage(nextImageId: number) {
@@ -144,7 +176,7 @@ async function confirmSelected() {
 }
 
 function annotationOptionText(annotationId: number): string {
-  const annotation = studioStore.image?.annotations.find((item) => item.id === annotationId)
+  const annotation = imageAnnotations.value.find((item) => item.id === annotationId)
   if (!annotation) return `#${annotationId}`
   return `#${annotation.id} ${annotation.label}`
 }
@@ -249,7 +281,14 @@ function onKeyDown(ev: KeyboardEvent) {
 
 onMounted(() => {
   void hydrate()
-  resizeObserver = new ResizeObserver(() => updateStageSize())
+  resizeObserver = new ResizeObserver(() => {
+    updateStageViewportSize()
+    updateStageSize()
+  })
+  if (stageViewportRef.value) {
+    resizeObserver.observe(stageViewportRef.value)
+    updateStageViewportSize()
+  }
   if (stageRef.value) {
     resizeObserver.observe(stageRef.value)
     updateStageSize()
@@ -276,6 +315,15 @@ watch(stageRef, (next, previous) => {
   }
 })
 
+watch(stageViewportRef, (next, previous) => {
+  if (!resizeObserver) return
+  if (previous) resizeObserver.unobserve(previous)
+  if (next) {
+    resizeObserver.observe(next)
+    updateStageViewportSize()
+  }
+})
+
 watch(
   projectLabels,
   (labels) => {
@@ -296,74 +344,75 @@ watch(
     <SectionPanel class="annotate-stage-panel">
       <template #header><strong>标注工作区</strong></template>
       <template #actions>
-        <select v-model="selectedLabel" :disabled="projectLabels.length === 0">
-          <option v-for="label in projectLabels" :key="label" :value="label">{{ label }}</option>
-          <option v-if="projectLabels.length === 0" value="">未配置标签</option>
-        </select>
-        <button @click="hydrate">刷新</button>
-        <button :disabled="!studioStore.previousImageId()" @click="goPreviousImage">上一张</button>
-        <button :disabled="!studioStore.nextImageId()" @click="goNextImage">下一张</button>
-        <button :disabled="!studioStore.selectedAnnotationId" @click="studioStore.deleteSelected">删除</button>
-        <button class="primary" :disabled="!studioStore.selectedAnnotationId" @click="confirmSelected">确认</button>
+        <div class="annotate-toolbar">
+          <select class="annotate-toolbar-select" v-model="selectedLabel" :disabled="projectLabels.length === 0">
+            <option v-for="label in projectLabels" :key="label" :value="label">{{ label }}</option>
+            <option v-if="projectLabels.length === 0" value="">未配置标签</option>
+          </select>
+          <button @click="hydrate">刷新</button>
+          <button :disabled="!studioStore.previousImageId()" @click="goPreviousImage">上一张</button>
+          <button :disabled="!studioStore.nextImageId()" @click="goNextImage">下一张</button>
+          <button :disabled="!studioStore.selectedAnnotationId" @click="studioStore.deleteSelected">删除</button>
+          <button class="primary" :disabled="!studioStore.selectedAnnotationId" @click="confirmSelected">确认</button>
+        </div>
       </template>
 
       <div v-if="error" class="annotate-error">{{ error }}</div>
 
       <div v-if="studioStore.image" class="annotate-stage-wrap">
-        <div class="annotate-stage-meta mono">
-          <span>文件={{ studioStore.image.filename }}</span>
-          <span>尺寸={{ studioStore.image.width }} × {{ studioStore.image.height }}</span>
-          <span>标签={{ selectedLabel || '--' }}</span>
-        </div>
+        <div ref="stageViewportRef" class="annotate-stage-viewport">
+          <div
+            ref="stageRef"
+            class="annotate-stage"
+            :style="stageCanvasStyle"
+            @pointerdown="onPointerDown"
+            @pointermove="onPointerMove"
+            @pointerup="onPointerUp"
+            @pointercancel="onPointerCancel"
+            @contextmenu.prevent
+          >
+            <img class="annotate-image" :src="studioStore.image.imageUrl" :alt="studioStore.image.filename" draggable="false" @dragstart.prevent />
 
-        <div
-          ref="stageRef"
-          class="annotate-stage"
-          :style="stageAspectRatio"
-          @pointerdown="onPointerDown"
-          @pointermove="onPointerMove"
-          @pointerup="onPointerUp"
-          @pointercancel="onPointerCancel"
-          @contextmenu.prevent
-        >
-          <img class="annotate-image" :src="studioStore.image.imageUrl" :alt="studioStore.image.filename" draggable="false" @dragstart.prevent />
-          <svg class="annotate-overlay" :viewBox="`0 0 ${studioStore.image.width} ${studioStore.image.height}`" preserveAspectRatio="none">
-            <g v-for="annotation in studioStore.image.annotations" :key="annotation.id">
-              <polygon
-                v-if="annotation.polygon.length"
-                :points="polygonPoints(annotation.polygon)"
-                class="annotate-polygon"
-                :class="{ active: studioStore.selectedAnnotationId === annotation.id }"
-              />
-              <template v-if="annotation.bbox">
-                <rect
-                  :x="imageUnitsRect(annotation.bbox).x"
-                  :y="imageUnitsRect(annotation.bbox).y"
-                  :width="imageUnitsRect(annotation.bbox).width"
-                  :height="imageUnitsRect(annotation.bbox).height"
-                  class="annotate-bbox"
+            <svg class="annotate-overlay" :viewBox="`0 0 ${studioStore.image.width} ${studioStore.image.height}`" preserveAspectRatio="none">
+              <g v-for="annotation in imageAnnotations" :key="annotation.id">
+                <polygon
+                  v-if="annotation.polygon.length"
+                  :points="polygonPoints(annotation.polygon)"
+                  class="annotate-polygon"
                   :class="{ active: studioStore.selectedAnnotationId === annotation.id }"
                 />
-                <text
-                  :x="imageUnitsRect(annotation.bbox).x + labelOffsetX"
-                  :y="imageUnitsRect(annotation.bbox).y + labelOffsetY"
-                  :font-size="labelFontSize"
-                  class="annotate-label"
-                >
-                  {{ annotation.label }}
-                </text>
-              </template>
-            </g>
 
-            <rect
-              v-if="draftBbox"
-              :x="imageUnitsRect(draftBbox).x"
-              :y="imageUnitsRect(draftBbox).y"
-              :width="imageUnitsRect(draftBbox).width"
-              :height="imageUnitsRect(draftBbox).height"
-              class="annotate-draft"
-            />
-          </svg>
+                <template v-if="annotation.bbox">
+                  <rect
+                    :x="imageUnitsRect(annotation.bbox).x"
+                    :y="imageUnitsRect(annotation.bbox).y"
+                    :width="imageUnitsRect(annotation.bbox).width"
+                    :height="imageUnitsRect(annotation.bbox).height"
+                    class="annotate-bbox"
+                    :class="{ active: studioStore.selectedAnnotationId === annotation.id }"
+                  />
+
+                  <text
+                    :x="imageUnitsRect(annotation.bbox).x + labelOffsetX"
+                    :y="imageUnitsRect(annotation.bbox).y + labelOffsetY"
+                    :font-size="labelFontSize"
+                    class="annotate-label"
+                  >
+                    {{ annotation.label }}
+                  </text>
+                </template>
+              </g>
+
+              <rect
+                v-if="draftBbox"
+                :x="imageUnitsRect(draftBbox).x"
+                :y="imageUnitsRect(draftBbox).y"
+                :width="imageUnitsRect(draftBbox).width"
+                :height="imageUnitsRect(draftBbox).height"
+                class="annotate-draft"
+              />
+            </svg>
+          </div>
         </div>
       </div>
 
@@ -371,65 +420,69 @@ watch(
     </SectionPanel>
 
     <aside class="annotate-sidebar">
-      <SectionPanel class="annotate-column">
+      <SectionPanel class="annotate-inspector-panel">
         <template #header><strong>当前图片</strong></template>
-
-        <div class="annotate-focus-grid">
-          <div class="annotate-focus-item">
-            <span>待复核</span>
-            <strong class="mono">{{ studioStore.queue.length }}</strong>
-          </div>
-          <div class="annotate-focus-item">
-            <span>当前标注数</span>
-            <strong class="mono">{{ studioStore.image?.annotations.length ?? 0 }}</strong>
-          </div>
-          <div class="annotate-focus-item">
-            <span>质量分</span>
-            <strong class="mono">{{ studioStore.queue.find((item) => item.imageId === studioStore.image?.id)?.qualityScore?.toFixed(2) ?? '--' }}</strong>
-          </div>
-          <div class="annotate-focus-item">
-            <span>当前标签</span>
-            <strong>{{ selectedLabel || '--' }}</strong>
-          </div>
-        </div>
-      </SectionPanel>
-
-      <SectionPanel class="annotate-column annotate-queue-panel">
-        <template #header><strong>待复核队列</strong></template>
-        <template #actions>
-          <span class="mono">{{ studioStore.queue.length }}</span>
-        </template>
-
-        <div class="annotate-queue">
-          <button
-            v-for="item in studioStore.queue"
-            :key="item.imageId"
-            class="annotate-queue-item"
-            :class="{ active: item.imageId === studioStore.image?.id }"
-            @click="openImage(item.imageId)"
-          >
-            <strong>{{ item.filename }}</strong>
-            <div class="annotate-queue-meta mono">
-              <span>质量={{ item.qualityScore?.toFixed(2) ?? '--' }}</span>
-              <span>数量={{ item.annotationCount }}</span>
+        <div class="annotate-inspector">
+          <section class="annotate-inspector-section annotate-summary-section">
+            <div class="annotate-focus-grid">
+              <div class="annotate-focus-item">
+                <span>待复核</span>
+                <strong class="mono">{{ studioStore.queue.length }}</strong>
+              </div>
+              <div class="annotate-focus-item">
+                <span>标注数</span>
+                <strong class="mono">{{ imageAnnotations.length }}</strong>
+              </div>
+              <div class="annotate-focus-item">
+                <span>质量分</span>
+                <strong class="mono">{{ currentQueueItem?.qualityScore?.toFixed(2) ?? '--' }}</strong>
+              </div>
             </div>
-          </button>
-          <div v-if="studioStore.queue.length === 0" class="annotate-empty">当前没有待复核图片</div>
-        </div>
-      </SectionPanel>
+          </section>
 
-      <SectionPanel class="annotate-column">
-        <template #header><strong>当前标注</strong></template>
+          <section class="annotate-inspector-section annotate-queue-section">
+            <div class="annotate-section-head">
+              <strong>待复核队列</strong>
+              <span class="mono">{{ studioStore.queue.length }}</span>
+            </div>
 
-        <div v-if="(studioStore.image?.annotations.length ?? 0) === 0" class="annotate-empty">当前图片还没有标注</div>
+            <div class="annotate-queue">
+              <button
+                v-for="item in studioStore.queue"
+                :key="item.imageId"
+                class="annotate-queue-item"
+                :class="{ active: item.imageId === studioStore.image?.id }"
+                @click="openImage(item.imageId)"
+              >
+                <strong>{{ item.filename }}</strong>
+                <div class="annotate-queue-meta">
+                  <span>质量={{ item.qualityScore?.toFixed(2) ?? '--' }}</span>
+                  <span>数量={{ item.annotationCount }}</span>
+                </div>
+              </button>
 
-        <div v-else class="annotate-selection-panel">
-          <select v-model.number="selectedAnnotationId">
-            <option v-for="annotation in studioStore.image?.annotations ?? []" :key="annotation.id" :value="annotation.id">
-              {{ annotationOptionText(annotation.id) }}
-            </option>
-          </select>
-          <button :disabled="!studioStore.selectedAnnotationId" @click="studioStore.deleteSelected">删除框</button>
+              <div v-if="studioStore.queue.length === 0" class="annotate-empty">当前没有待复核图片</div>
+            </div>
+          </section>
+
+          <section class="annotate-inspector-section">
+            <div class="annotate-section-head">
+              <strong>标注框</strong>
+            </div>
+
+            <div class="annotate-selection-panel">
+              <select v-model.number="selectedAnnotationId" :disabled="!hasAnnotations">
+                <option v-if="!hasAnnotations" :value="0">暂无标注框</option>
+                <option v-for="annotation in imageAnnotations" :key="annotation.id" :value="annotation.id">
+                  {{ annotationOptionText(annotation.id) }}
+                </option>
+              </select>
+
+              <button :disabled="!studioStore.selectedAnnotationId" @click="studioStore.deleteSelected">删除框</button>
+            </div>
+
+            <div v-if="!hasAnnotations" class="annotate-empty">当前图片还没有标注框</div>
+          </section>
         </div>
       </SectionPanel>
     </aside>
@@ -439,92 +492,86 @@ watch(
 <style scoped>
 .annotate-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
-  gap: 16px;
-  height: calc(100dvh - 220px);
-  min-height: 0;
-  overflow: hidden;
+  grid-template-columns: minmax(0, 1fr) 272px;
+  grid-template-rows: minmax(0, 1fr);
+  gap: 10px;
+  height: 100%;
+  min-height: 100%;
+  align-items: stretch;
 }
 
-.annotate-stage-panel,
-.annotate-queue-panel {
+.annotate-stage-panel {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  min-height: 0;
+  min-width: 0;
+  height: 100%;
 }
 
-.annotate-sidebar {
-  display: grid;
-  grid-template-rows: 196px minmax(0, 1fr) 132px;
-  gap: 16px;
-  min-height: 0;
-}
-
-.annotate-column {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  min-height: 0;
-}
-
-.annotate-queue,
-.annotate-selection-panel {
-  display: grid;
-  gap: 8px;
-}
-
-.annotate-queue-item {
-  display: grid;
-  gap: 6px;
-  height: 88px;
-  align-content: start;
-  border: 1px solid var(--line);
-  background: var(--panel-soft);
-  padding: 12px;
-  text-align: left;
-  overflow: hidden;
-}
-
-.annotate-queue-item.active {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.annotate-queue-meta,
-.annotate-stage-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  color: var(--text-muted);
-  font-size: 12px;
+.annotate-stage-panel :deep(.section-panel-head) {
+  align-items: flex-start;
+  padding: 9px 10px;
 }
 
 .annotate-stage-panel :deep(.section-panel-body) {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   height: 100%;
   min-height: 0;
+  padding: 10px;
 }
 
-.annotate-column :deep(.section-panel-body) {
-  display: grid;
-  height: 100%;
-  min-height: 0;
-  padding: 12px;
+.annotate-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
 }
 
-.annotate-column :deep(.section-panel-head) {
-  padding: 10px 12px;
+.annotate-toolbar button,
+.annotate-toolbar select {
+  height: 36px;
+  padding: 8px 12px;
+}
+
+.annotate-toolbar-select {
+  min-width: 96px;
 }
 
 .annotate-stage-wrap {
   display: grid;
-  gap: 10px;
+  height: 100%;
   min-height: 0;
+}
+
+.annotate-stage-viewport {
+  position: relative;
+  display: grid;
+  height: 100%;
+  min-height: clamp(420px, calc(100dvh - 286px), 760px);
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid #d4e0ee;
+  background: linear-gradient(180deg, #f6faff 0%, #ebf3fe 100%);
+  padding: 10px;
+}
+
+.annotate-stage-viewport::before {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(11, 95, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(11, 95, 255, 0.04) 1px, transparent 1px);
+  background-size: 24px 24px;
+  opacity: 0.7;
+  animation: annotate-grid-drift 18s linear infinite;
+  content: '';
 }
 
 .annotate-stage {
   position: relative;
-  width: 100%;
+  z-index: 1;
+  max-width: 100%;
+  max-height: 100%;
   border: 1px solid #b8cbe3;
   background: #dfe9f8;
   user-select: none;
@@ -582,46 +629,118 @@ watch(
   font-weight: 600;
 }
 
+.annotate-sidebar {
+  min-width: 0;
+  height: 100%;
+}
+
+.annotate-inspector-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+}
+
+.annotate-inspector-panel :deep(.section-panel-head) {
+  padding: 9px 10px;
+}
+
+.annotate-inspector-panel :deep(.section-panel-body) {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+}
+
+.annotate-inspector {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: 100%;
+  min-height: clamp(420px, calc(100dvh - 286px), 760px);
+}
+
+.annotate-inspector-section {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.annotate-summary-section {
+  padding-top: 8px;
+}
+
+.annotate-inspector-section + .annotate-inspector-section {
+  border-top: 1px solid var(--line);
+}
+
+.annotate-queue-section {
+  min-height: 0;
+}
+
+.annotate-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 22px;
+}
+
 .annotate-focus-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-auto-rows: minmax(0, 1fr);
-  gap: 10px;
-  height: 100%;
-  align-content: start;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
 }
 
 .annotate-focus-item {
   display: grid;
-  gap: 6px;
+  gap: 3px;
+  min-height: 58px;
   border: 1px solid var(--line);
-  background: var(--panel-soft);
-  padding: 12px;
+  background: linear-gradient(180deg, #fbfdff 0%, #f3f8ff 100%);
+  padding: 8px;
 }
 
-.annotate-focus-item span {
+.annotate-focus-item span,
+.annotate-queue-meta,
+.annotate-empty {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
-.annotate-queue-panel {
-  min-height: 0;
-}
-
-.annotate-queue-panel :deep(.section-panel-body) {
-  display: grid;
-  height: 100%;
-  min-height: 0;
+.annotate-focus-item strong {
+  font-size: 22px;
+  line-height: 1;
 }
 
 .annotate-queue {
-  align-content: start;
-  height: 100%;
-  grid-auto-rows: 88px;
+  display: grid;
+  gap: 6px;
   min-height: 0;
   overflow-y: auto;
-  padding-right: 4px;
-  scrollbar-gutter: stable;
+}
+
+.annotate-queue-item {
+  display: grid;
+  gap: 3px;
+  min-height: 60px;
+  align-content: start;
+  border: 1px solid var(--line);
+  background: #f8fbff;
+  padding: 8px 10px;
+  text-align: left;
+  overflow: hidden;
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease;
+}
+
+.annotate-queue-item:hover {
+  border-color: #a9c2e4;
+  background: #f3f8ff;
+}
+
+.annotate-queue-item.active {
+  border-color: var(--accent);
+  background: linear-gradient(90deg, rgba(11, 95, 255, 0.12) 0%, rgba(255, 255, 255, 1) 100%);
 }
 
 .annotate-queue-item strong {
@@ -631,29 +750,71 @@ watch(
 }
 
 .annotate-selection-panel {
-  height: 100%;
-  grid-template-columns: minmax(0, 1fr) 88px;
-  align-items: start;
-  align-content: start;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 82px;
+  gap: 6px;
+}
+
+.annotate-selection-panel select,
+.annotate-selection-panel button {
+  height: 36px;
 }
 
 .annotate-error {
   border: 1px solid rgba(212, 72, 72, 0.32);
   background: #fff4f4;
-  padding: 10px 12px;
+  padding: 8px 10px;
   color: var(--danger);
 }
 
 .annotate-empty {
-  color: var(--text-muted);
-  font-size: 13px;
+  align-self: start;
+}
+
+@keyframes annotate-grid-drift {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+
+  to {
+    transform: translate3d(24px, 24px, 0);
+  }
 }
 
 @media (max-width: 1280px) {
   .annotate-shell {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
     height: auto;
-    overflow: visible;
+  }
+
+  .annotate-stage-viewport {
+    height: auto;
+    min-height: clamp(420px, calc(100dvh - 324px), 720px);
+  }
+
+  .annotate-inspector {
+    height: auto;
+    min-height: 0;
+  }
+}
+
+@media (max-width: 960px) {
+  .annotate-stage-panel :deep(.section-panel-head) {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .annotate-stage-panel :deep(.section-panel-actions) {
+    width: 100%;
+  }
+
+  .annotate-toolbar {
+    justify-content: stretch;
+  }
+
+  .annotate-toolbar > * {
+    flex: 1 1 calc(50% - 3px);
   }
 
   .annotate-focus-grid {
@@ -662,6 +823,11 @@ watch(
 
   .annotate-selection-panel {
     grid-template-columns: 1fr;
+  }
+
+  .annotate-stage-viewport {
+    height: auto;
+    min-height: 360px;
   }
 }
 </style>

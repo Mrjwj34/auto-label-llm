@@ -19,7 +19,7 @@ onMounted(() => {
     <header class="page-header">
       <div>
         <h1 class="page-title">诊断</h1>
-        <div class="page-meta mono">上次自检={{ systemStore.diagnostics?.lastRunAt ?? '-' }}</div>
+        <div class="page-meta">上次自检={{ systemStore.diagnostics?.lastRunAt ?? '-' }}</div>
       </div>
       <div>
         <button class="primary" :disabled="systemStore.runningSelftest" @click="systemStore.runSelftest">
@@ -32,7 +32,7 @@ onMounted(() => {
       <SectionPanel>
         <template #header><strong>服务健康</strong></template>
         <div class="diagnostics-stack">
-          <div v-for="service in systemStore.diagnostics?.services ?? []" :key="service.name" class="diagnostics-row mono">
+          <div v-for="service in systemStore.diagnostics?.services ?? []" :key="service.name" class="diagnostics-row">
             <span>{{ serviceNameText(service.name) }}</span>
             <StatusChip :label="serviceHealthText(service.status)" :tone="service.status === 'healthy' ? 'success' : service.status === 'degraded' ? 'warning' : 'danger'" />
           </div>
@@ -42,7 +42,7 @@ onMounted(() => {
       <SectionPanel>
         <template #header><strong>自检</strong></template>
         <div class="diagnostics-stack">
-          <div v-for="check in systemStore.diagnostics?.selftest ?? []" :key="check.name" class="diagnostics-row mono">
+          <div v-for="check in systemStore.diagnostics?.selftest ?? []" :key="check.name" class="diagnostics-row">
             <span>{{ selftestNameText(check.name) }}</span>
             <StatusChip :label="selftestStatusText(check.status)" :tone="check.status === 'PASS' ? 'success' : check.status === 'TIMEOUT' ? 'warning' : check.status === 'FAIL' ? 'danger' : 'neutral'" />
           </div>
@@ -51,7 +51,7 @@ onMounted(() => {
 
       <SectionPanel>
         <template #header><strong>缓存</strong></template>
-        <div class="diagnostics-stack mono">
+        <div class="diagnostics-stack">
           <div v-for="cache in systemStore.diagnostics?.caches ?? []" :key="cache.name" class="diagnostics-row">
             <span>{{ cache.name }}</span>
             <span>{{ cacheStatusText(cache.status) }}</span>

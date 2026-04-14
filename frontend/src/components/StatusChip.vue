@@ -2,11 +2,12 @@
 const props = defineProps<{
   tone?: 'neutral' | 'accent' | 'success' | 'warning' | 'danger'
   label: string
+  compact?: boolean
 }>()
 </script>
 
 <template>
-  <span class="status-chip" :class="props.tone ?? 'neutral'">{{ props.label }}</span>
+  <span class="status-chip" :class="[props.tone ?? 'neutral', { compact: props.compact }]">{{ props.label }}</span>
 </template>
 
 <style scoped>
@@ -19,7 +20,14 @@ const props = defineProps<{
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.02em;
+  white-space: nowrap;
   background: #fff;
+}
+
+.status-chip.compact {
+  padding: 2px 6px;
+  font-size: 11px;
+  letter-spacing: 0;
 }
 
 .status-chip.accent {
