@@ -31,3 +31,4 @@ frontend/.env.local
 # OS
 Thumbs.db
 Desktop.ini
+.vscode/settings.json
