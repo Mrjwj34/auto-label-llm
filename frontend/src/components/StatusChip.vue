@@ -14,12 +14,13 @@ const props = defineProps<{
   display: inline-flex;
   align-items: center;
   border: 1px solid var(--line);
-  padding: 4px 8px;
+  border-radius: 999px;
+  padding: 5px 10px;
   color: var(--text-soft);
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.02em;
-  text-transform: uppercase;
+  background: rgba(255, 255, 255, 0.75);
 }
 
 .status-chip.accent {

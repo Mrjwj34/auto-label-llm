@@ -1,13 +1,13 @@
 :root {
-  --accent: #0b5fff;
-  --accent-soft: #e7f0ff;
-  --bg: #f4f8ff;
+  --accent: #1f6fff;
+  --accent-soft: #eef4ff;
+  --bg: #f3f6fb;
   --panel: #ffffff;
-  --panel-soft: #f7faff;
-  --line: #d8e3f1;
-  --text-strong: #10233f;
-  --text-soft: #355277;
-  --text-muted: #5c6f8a;
+  --panel-soft: #f6f8fc;
+  --line: #dbe3ee;
+  --text-strong: #14233a;
+  --text-soft: #3c536f;
+  --text-muted: #6a7e98;
   --success: #11ad7c;
   --warning: #bf7f20;
   --danger: #d44848;
@@ -37,7 +37,9 @@ body,
 body {
   margin: 0;
   min-width: 320px;
-  background: var(--bg);
+  background:
+    radial-gradient(circle at top left, rgba(31, 111, 255, 0.08), transparent 28%),
+    linear-gradient(180deg, #f6f8fc 0%, var(--bg) 100%);
 }
 
 button,
@@ -55,8 +57,10 @@ button {
   border: 1px solid var(--line);
   background: var(--panel);
   padding: 10px 14px;
+  border-radius: 14px;
   color: var(--text-soft);
   cursor: pointer;
+  box-shadow: 0 10px 28px rgba(20, 35, 58, 0.05);
   transition:
     transform 160ms ease,
     border-color 160ms ease,
@@ -78,7 +82,7 @@ button.primary {
 
 button.primary:hover {
   color: #fff;
-  background: #0a55e2;
+  background: #155de6;
 }
 
 button:disabled {
@@ -93,7 +97,9 @@ textarea {
   border: 1px solid var(--line);
   background: var(--panel);
   padding: 10px 12px;
+  border-radius: 14px;
   color: var(--text-strong);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
 }
 
 textarea {
@@ -116,8 +122,9 @@ textarea {
 .page-title {
   margin: 0;
   color: var(--text-strong);
-  font-size: 34px;
-  line-height: 1;
+  font-size: 32px;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
 }
 
 .page-meta {

@@ -58,15 +58,6 @@ onMounted(() => {
           </div>
         </div>
       </SectionPanel>
-
-      <SectionPanel>
-        <template #header><strong>命令</strong></template>
-        <div class="diagnostics-stack">
-          <button v-for="command in systemStore.diagnostics?.commands ?? []" :key="command" class="diagnostics-command mono">
-            {{ command }}
-          </button>
-        </div>
-      </SectionPanel>
     </div>
   </div>
 </template>
@@ -74,7 +65,7 @@ onMounted(() => {
 <style scoped>
 .system-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
 }
 
@@ -88,18 +79,17 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  border: 1px solid var(--line);
-  background: var(--panel-soft);
-  padding: 12px;
-}
-
-.diagnostics-command {
-  justify-content: flex-start;
-  background: var(--panel-soft);
-  text-align: left;
+  border-bottom: 1px solid rgba(94, 111, 138, 0.14);
+  padding: 10px 0;
 }
 
 @media (max-width: 1080px) {
+  .system-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
   .system-grid {
     grid-template-columns: 1fr;
   }

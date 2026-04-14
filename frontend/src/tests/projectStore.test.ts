@@ -22,6 +22,7 @@ describe('projectStore', () => {
 
     expect(store.projects.length).toBeGreaterThan(0)
     expect(store.workflows.some((workflow) => workflow.key === 'generic_instance_segmentation')).toBe(true)
+    expect(store.availableCreateWorkflows.length).toBeGreaterThanOrEqual(2)
   })
 
   it('creates a project without real backend', async () => {

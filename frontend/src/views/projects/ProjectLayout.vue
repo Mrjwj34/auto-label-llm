@@ -40,7 +40,7 @@ watch(projectId, (nextProjectId) => {
       </div>
       <div class="project-layout-meta">
         <span class="project-layout-base mono">基础模型={{ systemStore.systemSettings?.llm.baseModel ?? '-' }}</span>
-        <StatusChip :label="`模型标签 ${projectStore.settings?.activeModelTag ?? 'base'}`" tone="accent" />
+        <StatusChip :label="`激活版本 ${projectStore.settings?.activeModelTag ?? 'base'}`" tone="accent" />
       </div>
     </header>
 

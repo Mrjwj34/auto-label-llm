@@ -47,8 +47,10 @@ defineProps<{
   gap: 16px;
   border: 1px solid var(--text-strong);
   background: var(--text-strong);
+  border-radius: 24px;
   padding: 18px 20px;
   color: #fff;
+  box-shadow: 0 24px 60px rgba(20, 35, 58, 0.18);
 }
 
 .task-banner-main {
@@ -82,6 +84,7 @@ defineProps<{
 .task-banner-track {
   overflow: hidden;
   height: 10px;
+  border-radius: 999px;
   background: rgba(255, 255, 255, 0.14);
 }
 

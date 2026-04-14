@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import type { ECharts, EChartsCoreOption } from 'echarts/core'
 
 type ChartSeries = {
   key: string
@@ -15,155 +16,198 @@ const props = defineProps<{
   emptyLabel?: string
 }>()
 
-const viewWidth = 640
-const viewHeight = 260
-const chartPadding = {
-  top: 18,
-  right: 18,
-  bottom: 34,
-  left: 44,
-}
+const chartHost = ref<HTMLDivElement | null>(null)
+let chart: ECharts | null = null
+let resizeObserver: ResizeObserver | null = null
+let echartsModule: typeof import('echarts/core') | null = null
 
-const preparedSeries = computed(() =>
-  props.series.map((series) => ({
+const visibleSeries = computed(() =>
+  props.series
+    .map((series) => ({
+      ...series,
+      values: series.values.map((value) => (Number.isFinite(value) ? value : null)),
+    }))
+    .filter((series) => series.values.some((value) => value != null)),
+)
+
+const summarySeries = computed(() =>
+  visibleSeries.value.map((series) => ({
     ...series,
-    values: series.values.filter((value) => Number.isFinite(value)),
+    latest: [...series.values].reverse().find((value) => value != null) ?? null,
   })),
 )
 
-const allValues = computed(() => preparedSeries.value.flatMap((series) => series.values))
+const hasData = computed(() => summarySeries.value.length > 0)
 
-const domain = computed(() => {
-  if (allValues.value.length === 0) {
-    return { min: 0, max: 1 }
-  }
-  const min = Math.min(...allValues.value)
-  const max = Math.max(...allValues.value)
-  if (min === max) {
-    const offset = min === 0 ? 1 : Math.abs(min) * 0.2
-    return { min: min - offset, max: max + offset }
-  }
-  const span = max - min
-  return {
-    min: Math.max(0, min - span * 0.08),
-    max: max + span * 0.1,
-  }
-})
-
-const innerWidth = viewWidth - chartPadding.left - chartPadding.right
-const innerHeight = viewHeight - chartPadding.top - chartPadding.bottom
-
-const gridValues = computed(() => {
-  const steps = 4
-  const interval = (domain.value.max - domain.value.min) / steps
-  return Array.from({ length: steps + 1 }, (_, index) => domain.value.min + interval * index)
-})
-
-const displayTicks = computed(() => {
-  if (props.labels.length <= 4) {
-    return props.labels.map((label, index) => ({ label, index }))
-  }
-  const indexes = Array.from(new Set([0, Math.floor((props.labels.length - 1) / 2), props.labels.length - 1]))
-  return indexes.map((index) => ({ label: props.labels[index] ?? '', index }))
-})
-
-function xFor(index: number): number {
-  if (props.labels.length <= 1) {
-    return chartPadding.left + innerWidth / 2
-  }
-  return chartPadding.left + (index / (props.labels.length - 1)) * innerWidth
-}
-
-function yFor(value: number): number {
-  const ratio = (value - domain.value.min) / (domain.value.max - domain.value.min || 1)
-  return chartPadding.top + innerHeight - ratio * innerHeight
-}
-
-function linePath(values: number[]): string {
-  if (values.length === 0) return ''
-  return values
-    .map((value, index) => `${index === 0 ? 'M' : 'L'} ${xFor(index).toFixed(2)} ${yFor(value).toFixed(2)}`)
-    .join(' ')
-}
-
-function areaPath(values: number[]): string {
-  if (values.length === 0) return ''
-  const line = linePath(values)
-  const endX = xFor(values.length - 1)
-  const startX = xFor(0)
-  const baseY = chartPadding.top + innerHeight
-  return `${line} L ${endX.toFixed(2)} ${baseY.toFixed(2)} L ${startX.toFixed(2)} ${baseY.toFixed(2)} Z`
-}
-
-function formatValue(value: number, format: ChartSeries['format'] = 'decimal'): string {
+function formatValue(value: number | null, format: ChartSeries['format'] = 'decimal'): string {
+  if (value == null) return '--'
   if (format === 'percent') return value.toFixed(2)
   if (format === 'integer') return String(Math.round(value))
   return value.toFixed(4)
 }
+
+async function ensureECharts() {
+  if (echartsModule) return echartsModule
+  const [core, charts, components, renderers] = await Promise.all([
+    import('echarts/core'),
+    import('echarts/charts'),
+    import('echarts/components'),
+    import('echarts/renderers'),
+  ])
+  core.use([charts.LineChart, components.GridComponent, components.TooltipComponent, renderers.CanvasRenderer])
+  echartsModule = core
+  return core
+}
+
+function buildOption(echarts: typeof import('echarts/core')): EChartsCoreOption {
+  const primaryFormat = visibleSeries.value[0]?.format ?? 'decimal'
+  return {
+    animationDuration: 520,
+    animationEasing: 'cubicOut',
+    grid: {
+      top: 28,
+      right: 18,
+      bottom: 26,
+      left: 40,
+      containLabel: false,
+    },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: '#14233a',
+      borderWidth: 0,
+      padding: 12,
+      textStyle: {
+        color: '#f8fbff',
+        fontFamily: 'IBM Plex Mono, JetBrains Mono, monospace',
+      },
+      valueFormatter(value: number | string) {
+        return formatValue(typeof value === 'number' ? value : null, primaryFormat)
+      },
+    },
+    xAxis: {
+      type: 'category',
+      data: props.labels,
+      boundaryGap: false,
+      axisLine: {
+        lineStyle: {
+          color: 'rgba(106, 126, 152, 0.18)',
+        },
+      },
+      axisTick: {
+        show: false,
+      },
+      axisLabel: {
+        color: '#6a7e98',
+        fontFamily: 'IBM Plex Mono, JetBrains Mono, monospace',
+        fontSize: 11,
+      },
+    },
+    yAxis: {
+      type: 'value',
+      splitNumber: 4,
+      axisLine: {
+        show: false,
+      },
+      axisTick: {
+        show: false,
+      },
+      axisLabel: {
+        color: '#6a7e98',
+        fontFamily: 'IBM Plex Mono, JetBrains Mono, monospace',
+        fontSize: 11,
+        formatter(value: number) {
+          return formatValue(value, primaryFormat)
+        },
+      },
+      splitLine: {
+        lineStyle: {
+          color: 'rgba(106, 126, 152, 0.12)',
+          type: 'dashed',
+        },
+      },
+    },
+    series: visibleSeries.value.map((series) => ({
+      type: 'line',
+      name: series.label,
+      data: series.values,
+      showSymbol: false,
+      symbol: 'circle',
+      symbolSize: 7,
+      smooth: true,
+      connectNulls: false,
+      lineStyle: {
+        width: 3,
+        color: series.color,
+      },
+      itemStyle: {
+        color: series.color,
+      },
+      areaStyle: {
+        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+          { offset: 0, color: `${series.color}33` },
+          { offset: 1, color: `${series.color}00` },
+        ]),
+      },
+      emphasis: {
+        focus: 'series',
+      },
+    })),
+  }
+}
+
+async function renderChart() {
+  await nextTick()
+  if (!chartHost.value || !hasData.value) return
+  const echarts = await ensureECharts()
+  if (!resizeObserver) {
+    resizeObserver = new ResizeObserver(() => {
+      chart?.resize()
+    })
+    resizeObserver.observe(chartHost.value)
+  }
+  if (!chart) {
+    chart = echarts.init(chartHost.value)
+  }
+  chart.setOption(buildOption(echarts), true)
+  chart.resize()
+}
+
+function teardownChart() {
+  resizeObserver?.disconnect()
+  resizeObserver = null
+  chart?.dispose()
+  chart = null
+}
+
+onMounted(async () => {
+  await renderChart()
+})
+
+watch([hasData, () => props.labels, visibleSeries], async ([nextHasData]) => {
+  if (!nextHasData) {
+    chart?.clear()
+    return
+  }
+  await renderChart()
+}, { deep: true })
+
+onBeforeUnmount(() => {
+  teardownChart()
+})
 </script>
 
 <template>
   <div class="metric-chart">
-    <div v-if="allValues.length === 0" class="metric-empty">{{ props.emptyLabel ?? '暂无指标数据' }}</div>
+    <div v-if="!hasData" class="metric-empty">{{ props.emptyLabel ?? '暂无指标数据' }}</div>
     <template v-else>
       <div class="metric-legend">
-        <div v-for="item in props.series" :key="item.key" class="metric-legend-item">
+        <article v-for="item in summarySeries" :key="item.key" class="metric-legend-item">
           <span class="metric-legend-swatch" :style="{ backgroundColor: item.color }" />
           <span>{{ item.label }}</span>
-          <strong class="mono">{{ formatValue(item.values[item.values.length - 1] ?? 0, item.format) }}</strong>
-        </div>
+          <strong class="mono">{{ formatValue(item.latest, item.format) }}</strong>
+        </article>
       </div>
-
-      <svg class="metric-svg" :viewBox="`0 0 ${viewWidth} ${viewHeight}`" role="img" aria-label="指标折线图">
-        <g>
-          <line
-            v-for="gridValue in gridValues"
-            :key="gridValue"
-            :x1="chartPadding.left"
-            :x2="viewWidth - chartPadding.right"
-            :y1="yFor(gridValue)"
-            :y2="yFor(gridValue)"
-            class="metric-grid"
-          />
-          <text
-            v-for="gridValue in gridValues"
-            :key="`${gridValue}-label`"
-            :x="chartPadding.left - 10"
-            :y="yFor(gridValue) + 4"
-            class="metric-axis"
-            text-anchor="end"
-          >
-            {{ formatValue(gridValue, props.series[0]?.format) }}
-          </text>
-        </g>
-
-        <g v-for="item in props.series" :key="item.key">
-          <path class="metric-area" :style="{ fill: `${item.color}20` }" :d="areaPath(item.values)" />
-          <path class="metric-line" :style="{ stroke: item.color }" :d="linePath(item.values)" />
-          <circle
-            v-for="(value, index) in item.values"
-            :key="`${item.key}-${index}`"
-            class="metric-point"
-            :style="{ fill: item.color }"
-            :cx="xFor(index)"
-            :cy="yFor(value)"
-            r="3.5"
-          />
-        </g>
-
-        <g>
-          <text
-            v-for="tick in displayTicks"
-            :key="`tick-${tick.index}`"
-            :x="xFor(tick.index)"
-            :y="viewHeight - 10"
-            class="metric-axis"
-            text-anchor="middle"
-          >
-            {{ tick.label }}
-          </text>
-        </g>
-      </svg>
+      <div ref="chartHost" class="metric-canvas" />
     </template>
   </div>
 </template>
@@ -171,98 +215,49 @@ function formatValue(value: number, format: ChartSeries['format'] = 'decimal'): 
 <style scoped>
 .metric-chart {
   display: grid;
-  gap: 12px;
+  gap: 14px;
 }
 
 .metric-empty {
   display: grid;
   place-items: center;
-  min-height: 240px;
+  min-height: 280px;
   border: 1px solid var(--line);
-  background: var(--panel-soft);
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgba(31, 111, 255, 0.04), rgba(31, 111, 255, 0));
   color: var(--text-muted);
 }
 
 .metric-legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 14px;
+  gap: 10px;
 }
 
 .metric-legend-item {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(106, 126, 152, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.74);
   color: var(--text-soft);
 }
 
 .metric-legend-swatch {
   width: 10px;
   height: 10px;
+  border-radius: 999px;
 }
 
-.metric-svg {
-  width: 100%;
-  min-height: 260px;
+.metric-canvas {
+  min-height: 280px;
   border: 1px solid var(--line);
+  border-radius: 24px;
   background:
-    linear-gradient(180deg, rgba(11, 95, 255, 0.05), rgba(11, 95, 255, 0)),
-    var(--panel-soft);
-}
-
-.metric-grid {
-  stroke: var(--line);
-  stroke-width: 1;
-  stroke-dasharray: 3 6;
-}
-
-.metric-axis {
-  fill: var(--text-muted);
-  font-size: 11px;
-  font-family: var(--font-mono);
-}
-
-.metric-line {
-  fill: none;
-  stroke-width: 2.5;
-  stroke-linejoin: round;
-  stroke-linecap: round;
-  stroke-dasharray: 1200;
-  stroke-dashoffset: 1200;
-  animation: metric-draw 900ms ease forwards;
-}
-
-.metric-area {
-  opacity: 0;
-  animation: metric-fade 420ms ease 220ms forwards;
-}
-
-.metric-point {
-  opacity: 0;
-  animation: metric-point-in 240ms ease forwards;
-}
-
-@keyframes metric-draw {
-  to {
-    stroke-dashoffset: 0;
-  }
-}
-
-@keyframes metric-fade {
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes metric-point-in {
-  from {
-    opacity: 0;
-    transform: scale(0.7);
-  }
-
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
+    linear-gradient(180deg, rgba(31, 111, 255, 0.05), rgba(31, 111, 255, 0.01)),
+    #fbfcfe;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
 }
 </style>

@@ -116,7 +116,7 @@ async function confirmAndMaybeAdvance() {
         <div class="annotate-field"><span>置信度</span><strong class="mono">{{ studioStore.selectedAnnotation.confidence?.toFixed(2) ?? '--' }}</strong></div>
         <div class="annotate-field"><span>已确认</span><strong class="mono">{{ studioStore.selectedAnnotation.confirmed ? '是' : '否' }}</strong></div>
         <div class="annotate-field"><span>后端</span><strong class="mono">{{ annotationBackendText(studioStore.selectedAnnotation.runtime.provider) }}</strong></div>
-        <div class="annotate-field"><span>模型标签</span><strong class="mono">{{ studioStore.selectedAnnotation.runtime.modelTag }}</strong></div>
+        <div class="annotate-field"><span>版本标签</span><strong class="mono">{{ studioStore.selectedAnnotation.runtime.modelTag }}</strong></div>
         <div class="annotate-field"><span>模型路由</span><strong class="mono">{{ studioStore.selectedAnnotation.runtime.modelName }}</strong></div>
         <div class="annotate-actions">
           <button @click="studioStore.deleteSelected">删除</button>

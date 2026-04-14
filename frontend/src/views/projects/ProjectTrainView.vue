@@ -65,7 +65,7 @@ function statusTone(status: string): 'success' | 'accent' | 'danger' | 'neutral'
 
       <div class="train-kpis">
         <div class="train-kpi">
-          <span>最新模型</span>
+          <span>最新训练版本</span>
           <strong class="mono">{{ latestJob?.modelTag ?? '--' }}</strong>
         </div>
         <div class="train-kpi">
@@ -126,6 +126,7 @@ function statusTone(status: string): 'success' | 'accent' | 'danger' | 'neutral'
   gap: 8px;
   border: 1px solid var(--line);
   background: var(--panel-soft);
+  border-radius: 20px;
   padding: 14px 16px;
 }
 
@@ -152,6 +153,7 @@ function statusTone(status: string): 'success' | 'accent' | 'danger' | 'neutral'
   gap: 10px;
   border: 1px solid var(--line);
   background: var(--panel-soft);
+  border-radius: 22px;
   padding: 14px;
   text-align: left;
 }

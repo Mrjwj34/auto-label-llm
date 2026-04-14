@@ -142,9 +142,6 @@ onMounted(() => {
           </option>
         </select>
       </div>
-      <div v-if="selectedWorkflow" class="subtle">
-        {{ selectedWorkflow.description }} 当前会自动推导内部 task_type={{ selectedWorkflow.task_type }}，无需单独选择。
-      </div>
       <div class="actions">
         <button
           class="btn primary"
@@ -204,9 +201,7 @@ onMounted(() => {
 }
 
 .subtle {
-  opacity: 0.72;
-  font-size: 13px;
-  margin-bottom: 10px;
+  display: none;
 }
 
 .card {

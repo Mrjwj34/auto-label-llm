@@ -51,7 +51,7 @@ function openAnnotate(imageId: number) {
         <button>导出 COCO</button>
       </template>
       <div class="data-toolbar mono">
-        <span>当前模型标签={{ workspace?.activeModelTag ?? '-' }}</span>
+        <span>激活版本={{ workspace?.activeModelTag ?? '-' }}</span>
         <span>标签={{ workspace?.labels.join('、') ?? '-' }}</span>
       </div>
     </SectionPanel>
@@ -117,12 +117,15 @@ function openAnnotate(imageId: number) {
   display: grid;
   gap: 10px;
   background: var(--panel-soft);
+  border-radius: 22px;
+  padding: 12px;
   text-align: left;
 }
 
 .data-thumb {
   width: 100%;
   border: 1px solid var(--line);
+  border-radius: 16px;
 }
 
 .data-card-meta {

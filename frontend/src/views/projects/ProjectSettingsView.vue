@@ -6,7 +6,7 @@ import LabelListEditor from '../../components/LabelListEditor.vue'
 import SectionPanel from '../../components/SectionPanel.vue'
 import { useProjectStore } from '../../stores/projectStore'
 import { useSystemRuntimeStore } from '../../stores/systemRuntimeStore'
-import { annotationBackendText, splitText, taskFamilyText, taskTypeText } from '../../utils/uiText'
+import { annotationBackendText, splitText, taskFamilyText } from '../../utils/uiText'
 
 const route = useRoute()
 const projectStore = useProjectStore()
@@ -50,17 +50,7 @@ const samEnabledForProject = computed(() => currentWorkflow.value?.capabilities.
 
 const currentBaseModel = computed(() => systemStore.systemSettings?.llm.baseModel ?? llmBaseModel.value)
 const currentAnnotationBackend = computed(() => annotationBackendText(systemStore.systemConfig?.runtime.annotationBackend ?? '-'))
-const compatibilityTaskType = computed(() => taskTypeText(projectStore.currentProject?.taskType ?? '-'))
 const currentTaskFamily = computed(() => taskFamilyText(projectStore.settings?.taskFamily ?? '-'))
-const workflowCompatibilityHint = computed(() => `兼容 taskType 会跟随 workflow 自动推导，当前内部值为 ${compatibilityTaskType.value}。`)
-
-const modelTagHint = computed(() => {
-  const modelTag = projectStore.settings?.activeModelTag ?? 'base'
-  if (modelTag === 'base') {
-    return `base 表示当前走基础模型通道，不是具体模型名；当前基础模型是 ${currentBaseModel.value}。`
-  }
-  return `当前激活的是 ${modelTag} 这条模型标签，底层基础模型仍然是 ${currentBaseModel.value}。`
-})
 
 const samScopeHint = computed(() =>
   samEnabledForProject.value
@@ -466,13 +456,9 @@ async function saveSystemSettings() {
         <button class="primary" :disabled="projectStore.saving" @click="saveProjectSettings">保存项目设置</button>
       </template>
 
-      <div class="settings-intro">
-        <p>项目级现在只保留工作流和标签。模型、SAM、评估等设置统一按上面的全局默认值执行。</p>
-      </div>
-
       <div class="settings-card-grid">
         <div class="settings-card">
-          <span>当前模型标签</span>
+          <span>激活版本</span>
           <strong class="mono">{{ projectStore.settings?.activeModelTag ?? '-' }}</strong>
         </div>
         <div class="settings-card">
@@ -489,16 +475,10 @@ async function saveSystemSettings() {
         </div>
       </div>
 
-      <div class="settings-inline-note mono">
-        <div>{{ modelTagHint }}</div>
-        <div>{{ workflowCompatibilityHint }}</div>
-      </div>
-
       <div class="settings-sections settings-sections-project">
         <section class="settings-block">
           <div class="settings-block-head">
             <h3>项目级可编辑项</h3>
-            <p>这里只保留真正会写入项目的字段：工作流和标签。工作流是主入口，任务类型不再单独暴露给用户选择。</p>
           </div>
           <div class="settings-fields">
             <label class="settings-field">
@@ -511,49 +491,8 @@ async function saveSystemSettings() {
             </label>
             <label class="settings-field">
               <span>标签</span>
-              <LabelListEditor
-                v-model="labels"
-                placeholder="一次输入一个标签，例如：裂缝"
-                helper="标签按项维护；保存时会整理成标签列表提交。"
-              />
+              <LabelListEditor v-model="labels" placeholder="一次输入一个标签，例如：裂缝" />
             </label>
-          </div>
-        </section>
-
-        <section class="settings-block">
-          <div class="settings-block-head">
-            <h3>当前工作流能力</h3>
-            <p>工作流决定当前项目是否支持自动标注、SAM refine 和点修正；这里只展示与当前项目兼容的工作流选项。</p>
-          </div>
-          <div class="settings-summary-list">
-            <div class="settings-summary-row">
-              <span>工作流</span>
-              <strong>{{ currentWorkflowName }}</strong>
-            </div>
-            <div class="settings-summary-row">
-              <span>workflow key</span>
-              <strong class="mono">{{ projectStore.settings?.workflowKey ?? '-' }}</strong>
-            </div>
-            <div class="settings-summary-row">
-              <span>任务族</span>
-              <strong>{{ currentTaskFamily }}</strong>
-            </div>
-            <div class="settings-summary-row">
-              <span>自动标注</span>
-              <strong>{{ currentWorkflow?.supportsAutoAnnotation ? '开启' : '关闭' }}</strong>
-            </div>
-            <div class="settings-summary-row">
-              <span>手工框编辑</span>
-              <strong>{{ currentWorkflow?.supportsManualBBox ? '开启' : '关闭' }}</strong>
-            </div>
-            <div class="settings-summary-row">
-              <span>点修正</span>
-              <strong>{{ currentWorkflow?.supportsPointRefine ? '开启' : '关闭' }}</strong>
-            </div>
-            <div class="settings-summary-row">
-              <span>SAM refine</span>
-              <strong>{{ samEnabledForProject ? '开启' : '关闭' }}</strong>
-            </div>
           </div>
         </section>
       </div>
@@ -605,14 +544,6 @@ async function saveSystemSettings() {
   font-size: 18px;
 }
 
-.settings-inline-note {
-  margin-top: 14px;
-  color: var(--text-muted);
-  font-size: 13px;
-  display: grid;
-  gap: 6px;
-}
-
 .settings-sections {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -621,7 +552,7 @@ async function saveSystemSettings() {
 }
 
 .settings-sections-project {
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  grid-template-columns: 1fr;
 }
 
 .settings-block {

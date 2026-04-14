@@ -106,7 +106,7 @@ function deltaText(current: number | undefined, previous: number | undefined): s
             </div>
             <div class="evaluate-row-grid mono">
               <span>创建={{ run.createdAt }}</span>
-              <span>模型={{ run.modelTag }}</span>
+              <span>版本={{ run.modelTag }}</span>
               <span>split={{ splitText(run.split) }}</span>
               <span>F1={{ run.f1.toFixed(2) }}</span>
               <span>Dice={{ run.dice.toFixed(2) }}</span>
@@ -159,6 +159,7 @@ function deltaText(current: number | undefined, previous: number | undefined): s
   gap: 8px;
   border: 1px solid var(--line);
   background: var(--panel-soft);
+  border-radius: 20px;
   padding: 14px 16px;
 }
 
@@ -191,6 +192,7 @@ function deltaText(current: number | undefined, previous: number | undefined): s
   gap: 10px;
   border: 1px solid var(--line);
   background: var(--panel-soft);
+  border-radius: 22px;
   padding: 14px;
   text-align: left;
 }

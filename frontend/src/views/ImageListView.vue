@@ -1276,7 +1276,6 @@ watch(evaluationBaselineRunId, () => {
         · family=<span class="mono">{{ selectedWorkflow.task_family }}</span>
         · point-refine=<span class="mono">{{ selectedWorkflow.supports_point_refine ? 'yes' : 'no' }}</span>
       </div>
-      <div v-if="selectedWorkflow" class="hint">{{ selectedWorkflow.description }}</div>
       <div class="row">
         <label class="label">Labels</label>
         <input
@@ -1288,9 +1287,6 @@ watch(evaluationBaselineRunId, () => {
         <button class="btn" data-testid="labels-save-btn" type="button" :disabled="labelsSaving" @click="saveLabels">
           {{ labelsSaving ? 'Saving...' : 'Save Labels' }}
         </button>
-      </div>
-      <div class="hint">
-        Auto annotation uses the project label list only. Users do not provide free-form prompts.
       </div>
       <div class="row">
         <button

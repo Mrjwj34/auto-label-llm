@@ -31,6 +31,13 @@ onMounted(() => {
   void projectStore.loadProjects()
 })
 
+async function openCreateDrawer() {
+  if (!projectStore.workflows.length) {
+    await projectStore.loadProjects()
+  }
+  projectStore.openCreateDrawer()
+}
+
 function openProject(projectId: number) {
   void router.push(`/projects/${projectId}/overview`)
 }
@@ -44,17 +51,6 @@ async function createProject() {
 
 function workflowDisplayName(workflowKey: string): string {
   return workflowMap.value.get(workflowKey)?.displayName ?? workflowKey
-}
-
-function workflowCapabilitySummary(workflowKey: string): string {
-  const workflow = workflowMap.value.get(workflowKey)
-  if (!workflow) return '能力信息待补充'
-  const summaryItems = [
-    workflow.supportsAutoAnnotation ? '自动标注' : null,
-    workflow.supportsManualBBox ? '框编辑' : null,
-    workflow.supportsPointRefine ? '点修正' : null,
-  ].filter((item): item is string => item != null)
-  return summaryItems.join(' / ') || '基础能力'
 }
 
 function taskStatusTone(status: string): 'neutral' | 'warning' | 'success' | 'danger' {
@@ -74,7 +70,7 @@ function taskStatusTone(status: string): 'neutral' | 'warning' | 'success' | 'da
       </div>
       <div class="projects-header-actions">
         <button @click="projectStore.loadProjects">刷新</button>
-        <button class="primary" @click="projectStore.openCreateDrawer()">新建项目</button>
+        <button class="primary" @click="openCreateDrawer">新建项目</button>
       </div>
     </header>
 
@@ -169,27 +165,13 @@ function taskStatusTone(status: string): 'neutral' | 'warning' | 'success' | 'da
                 @click="projectStore.createDraft.workflowKey = workflow.key"
               >
                 <strong>{{ workflow.displayName }}</strong>
-                <span class="mono">{{ taskFamilyText(workflow.taskFamily) }} · {{ workflowCapabilitySummary(workflow.key) }}</span>
-                <span>{{ workflow.description }}</span>
+                <span class="mono">{{ taskFamilyText(workflow.taskFamily) }}</span>
               </button>
             </div>
-            <p class="projects-workflow-hint">任务类型会由 workflow 自动推导并兼容提交，创建时不再单独让用户选择。</p>
           </div>
           <div class="projects-drawer-section">
             <label>标签</label>
-            <LabelListEditor
-              v-model="projectStore.createDraft.labels"
-              placeholder="一次输入一个标签，例如：建筑"
-              helper="按标签逐个维护；按回车或点击按钮即可添加。"
-            />
-          </div>
-          <div v-if="projectStore.selectedWorkflow" class="projects-capabilities mono">
-            <div>工作流={{ projectStore.selectedWorkflow.displayName }}</div>
-            <div>workflow key={{ projectStore.selectedWorkflow.key }}</div>
-            <div>任务族={{ taskFamilyText(projectStore.selectedWorkflow.taskFamily) }}</div>
-            <div>自动标注={{ projectStore.selectedWorkflow.supportsAutoAnnotation ? '是' : '否' }}</div>
-            <div>手工框编辑={{ projectStore.selectedWorkflow.supportsManualBBox ? '是' : '否' }}</div>
-            <div>点修正={{ projectStore.selectedWorkflow.supportsPointRefine ? '是' : '否' }}</div>
+            <LabelListEditor v-model="projectStore.createDraft.labels" placeholder="一次输入一个标签，例如：建筑" />
           </div>
           <button
             class="primary"
@@ -338,47 +320,42 @@ function taskStatusTone(status: string): 'neutral' | 'warning' | 'success' | 'da
 
 .projects-workflow-list {
   display: grid;
-  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .projects-workflow-item {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   justify-items: start;
+  min-height: 96px;
+  padding: 16px;
+  border-radius: 20px;
 }
 
 .projects-workflow-item strong {
   color: var(--text-strong);
+  font-size: 16px;
 }
 
-.projects-workflow-item span:last-child {
+.projects-workflow-item .mono {
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .projects-workflow-item.active {
   border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.projects-workflow-hint {
-  margin: 10px 0 0;
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-.projects-capabilities {
-  display: grid;
-  gap: 6px;
-  border: 1px solid var(--line);
-  background: var(--panel-soft);
-  padding: 12px;
+  background: linear-gradient(180deg, rgba(31, 111, 255, 0.12), rgba(31, 111, 255, 0.04));
+  box-shadow: inset 0 0 0 1px rgba(31, 111, 255, 0.1);
 }
 
 @media (max-width: 1080px) {
   .projects-kpis {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .projects-workflow-list {
+    grid-template-columns: 1fr;
   }
 }
 </style>
