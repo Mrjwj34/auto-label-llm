@@ -39,6 +39,8 @@ describe('projectStore', () => {
     const created = await create
     expect(created).not.toBeNull()
     expect(created?.name).toBe('Mock Project')
+    expect(created?.workflowKey).toBe('generic_detection')
+    expect(created?.taskType).toBe('detection')
     expect(store.projects[0]?.name).toBe('Mock Project')
     expect(store.settings?.labels).toEqual(['crack', 'patch'])
   })

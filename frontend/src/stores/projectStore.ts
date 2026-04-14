@@ -4,13 +4,16 @@ import type { ProjectMetaPayload, ProjectSettingsPayload, ProjectSummary, Settin
 
 type CreateDraft = {
   name: string
-  taskType: TaskType
   workflowKey: string
   labels: string[]
 }
 
-function defaultWorkflowKeyForTaskType(meta: Pick<ProjectMetaPayload, 'defaultWorkflows' | 'workflows'>, taskType: TaskType): string {
-  return meta.defaultWorkflows[taskType] ?? meta.workflows.find((workflow) => workflow.taskType === taskType)?.key ?? ''
+function defaultWorkflowKey(meta: Pick<ProjectMetaPayload, 'defaultWorkflows' | 'workflows'>): string {
+  return meta.workflows[0]?.key ?? meta.defaultWorkflows.segmentation ?? meta.defaultWorkflows.detection ?? ''
+}
+
+function workflowForKey(meta: Pick<ProjectMetaPayload, 'workflows'>, workflowKey: string): WorkflowDefinition | null {
+  return meta.workflows.find((workflow) => workflow.key === workflowKey) ?? null
 }
 
 export const useProjectStore = defineStore('project', {
@@ -32,7 +35,6 @@ export const useProjectStore = defineStore('project', {
     workflowFilter: 'all',
     createDraft: {
       name: '',
-      taskType: 'segmentation',
       workflowKey: 'generic_instance_segmentation',
       labels: [],
     } as CreateDraft,
@@ -41,12 +43,14 @@ export const useProjectStore = defineStore('project', {
     filteredProjects(state) {
       const query = state.search.trim().toLowerCase()
       return state.projects.filter((project) => {
+        const workflowName = state.workflows.find((workflow) => workflow.key === project.workflowKey)?.displayName.toLowerCase() ?? ''
         const matchesWorkflow = state.workflowFilter === 'all' || project.workflowKey === state.workflowFilter
         const matchesQuery =
           query.length === 0 ||
           project.name.toLowerCase().includes(query) ||
-          project.taskType.toLowerCase().includes(query) ||
-          project.workflowKey.toLowerCase().includes(query)
+          project.workflowKey.toLowerCase().includes(query) ||
+          project.taskFamily.toLowerCase().includes(query) ||
+          workflowName.includes(query)
         return matchesWorkflow && matchesQuery
       })
     },
@@ -54,7 +58,7 @@ export const useProjectStore = defineStore('project', {
       return state.workflows.find((workflow) => workflow.key === state.createDraft.workflowKey) ?? null
     },
     availableCreateWorkflows(state) {
-      return state.workflows.filter((workflow) => workflow.taskType === state.createDraft.taskType)
+      return state.workflows
     },
   },
   actions: {
@@ -66,6 +70,9 @@ export const useProjectStore = defineStore('project', {
         this.taskTypes = [...meta.taskTypes]
         this.defaultWorkflows = { ...meta.defaultWorkflows }
         this.workflows = meta.workflows
+        if (!this.createDraft.workflowKey || !this.workflows.some((workflow) => workflow.key === this.createDraft.workflowKey)) {
+          this.createDraft.workflowKey = defaultWorkflowKey(this)
+        }
       } finally {
         this.loading = false
       }
@@ -79,38 +86,31 @@ export const useProjectStore = defineStore('project', {
       this.settingsChange = null
     },
     openCreateDrawer(workflowKey?: string) {
-      const workflow = workflowKey ? this.workflows.find((item) => item.key === workflowKey) ?? null : null
-      const taskType = workflow?.taskType ?? this.taskTypes[0] ?? 'segmentation'
+      const workflow = workflowForKey(this, workflowKey ?? defaultWorkflowKey(this)) ?? workflowForKey(this, defaultWorkflowKey(this))
       this.createDrawerOpen = true
       this.createDraft = {
         name: '',
-        taskType,
-        workflowKey: workflow?.key ?? defaultWorkflowKeyForTaskType(this, taskType) ?? 'generic_instance_segmentation',
+        workflowKey: workflow?.key ?? defaultWorkflowKey(this),
         labels: [],
       }
     },
     closeCreateDrawer() {
       this.createDrawerOpen = false
     },
-    setCreateTaskType(taskType: TaskType) {
-      this.createDraft.taskType = taskType
-      const workflowStillValid = this.workflows.some(
-        (workflow) => workflow.key === this.createDraft.workflowKey && workflow.taskType === taskType,
-      )
-      if (!workflowStillValid) {
-        this.createDraft.workflowKey = defaultWorkflowKeyForTaskType(this, taskType)
-      }
-    },
     async createProject() {
       const labels = this.createDraft.labels
         .map((item) => item.trim())
         .filter(Boolean)
+      const workflow = workflowForKey(this, this.createDraft.workflowKey) ?? workflowForKey(this, defaultWorkflowKey(this))
+      if (!workflow) {
+        throw new Error('No workflow available for project creation')
+      }
       this.saving = true
       try {
         const created = await backendClient.createProject({
           name: this.createDraft.name.trim(),
-          taskType: this.createDraft.taskType,
-          workflowKey: this.createDraft.workflowKey,
+          taskType: workflow.taskType,
+          workflowKey: workflow.key,
         })
         if (labels.length > 0) {
           const payload = await backendClient.updateProjectSettings(created.id, { labels })

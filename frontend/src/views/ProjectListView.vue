@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api/http'
 
@@ -41,23 +41,20 @@ const projectMeta = ref<ProjectMeta | null>(null)
 const metaLoading = ref(false)
 
 const newName = ref('demo')
-const newTaskType = ref<TaskType>('detection')
 const newWorkflowKey = ref('generic_detection')
 
 const canCreate = computed(() => newName.value.trim().length > 0)
-const workflowOptions = computed(() =>
-  (projectMeta.value?.workflows ?? []).filter((workflow) => workflow.task_type === newTaskType.value),
-)
+const workflowOptions = computed(() => projectMeta.value?.workflows ?? [])
 const selectedWorkflow = computed(
   () => workflowOptions.value.find((workflow) => workflow.key === newWorkflowKey.value) ?? workflowOptions.value[0] ?? null,
 )
 
-function syncWorkflowWithTaskType(taskType: TaskType) {
+function syncWorkflowSelection() {
   const defaults = projectMeta.value?.default_workflows
-  const available = (projectMeta.value?.workflows ?? []).filter((workflow) => workflow.task_type === taskType)
+  const available = projectMeta.value?.workflows ?? []
   const current = available.find((workflow) => workflow.key === newWorkflowKey.value)
   if (current) return
-  newWorkflowKey.value = defaults?.[taskType] ?? available[0]?.key ?? ''
+  newWorkflowKey.value = defaults?.segmentation ?? defaults?.detection ?? available[0]?.key ?? ''
 }
 
 async function fetchProjectMeta() {
@@ -65,7 +62,7 @@ async function fetchProjectMeta() {
   try {
     const resp = await api.get('/api/projects/meta')
     projectMeta.value = resp.data?.data ?? null
-    syncWorkflowWithTaskType(newTaskType.value)
+    syncWorkflowSelection()
   } catch (err: any) {
     error.value = err?.message ? String(err.message) : String(err)
   } finally {
@@ -92,7 +89,7 @@ async function createProject() {
   try {
     await api.post('/api/projects', {
       name: newName.value.trim(),
-      task_type: newTaskType.value,
+      task_type: selectedWorkflow.value?.task_type ?? 'segmentation',
       workflow_key: newWorkflowKey.value || undefined,
     })
     await fetchProjects()
@@ -120,10 +117,6 @@ onMounted(() => {
   void fetchProjectMeta()
   void fetchProjects()
 })
-
-watch(newTaskType, (taskType) => {
-  syncWorkflowWithTaskType(taskType)
-})
 </script>
 
 <template>
@@ -142,13 +135,6 @@ watch(newTaskType, (taskType) => {
         <input v-model="newName" class="input" data-testid="project-name-input" placeholder="project name" />
       </div>
       <div class="row">
-        <label class="label">任务类型</label>
-        <select v-model="newTaskType" class="input" data-testid="project-task-type">
-          <option value="detection">detection (bbox)</option>
-          <option value="segmentation">segmentation (mask/polygon)</option>
-        </select>
-      </div>
-      <div class="row">
         <label class="label">工作流</label>
         <select v-model="newWorkflowKey" class="input" data-testid="project-workflow-key" :disabled="metaLoading">
           <option v-for="workflow in workflowOptions" :key="workflow.key" :value="workflow.key">
@@ -157,7 +143,7 @@ watch(newTaskType, (taskType) => {
         </select>
       </div>
       <div v-if="selectedWorkflow" class="subtle">
-        {{ selectedWorkflow.description }}
+        {{ selectedWorkflow.description }} 当前会自动推导内部 task_type={{ selectedWorkflow.task_type }}，无需单独选择。
       </div>
       <div class="actions">
         <button
@@ -182,9 +168,6 @@ watch(newTaskType, (taskType) => {
           <div class="meta">
             <span>#{{ p.id }}</span>
             <span class="dot">•</span>
-            <span>{{ p.task_type }}</span>
-          </div>
-          <div class="meta">
             <span class="mono">{{ p.workflow_key }}</span>
             <span class="dot">•</span>
             <span>{{ p.task_family }}</span>

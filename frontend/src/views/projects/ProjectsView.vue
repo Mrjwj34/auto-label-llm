@@ -1,22 +1,29 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import type { TaskType } from '../../backend/types'
 import LabelListEditor from '../../components/LabelListEditor.vue'
 import SectionPanel from '../../components/SectionPanel.vue'
+import StatusChip from '../../components/StatusChip.vue'
 import { useProjectStore } from '../../stores/projectStore'
-import { taskFamilyText, taskTypeText } from '../../utils/uiText'
+import { taskFamilyText, taskStatusText } from '../../utils/uiText'
 
 const router = useRouter()
 const projectStore = useProjectStore()
 
+const workflowMap = computed(() => new Map(projectStore.workflows.map((workflow) => [workflow.key, workflow])))
+
 const summary = computed(() => {
-  const detectionProjects = projectStore.projects.filter((project) => project.taskType === 'detection').length
-  const segmentationProjects = projectStore.projects.filter((project) => project.taskType === 'segmentation').length
+  const activeWorkflowCount = new Set(projectStore.projects.map((project) => project.workflowKey)).size
+  const autoAnnotationProjects = projectStore.projects.filter(
+    (project) => workflowMap.value.get(project.workflowKey)?.supportsAutoAnnotation,
+  ).length
+  const pointRefineProjects = projectStore.projects.filter(
+    (project) => workflowMap.value.get(project.workflowKey)?.supportsPointRefine,
+  ).length
   return {
-    detectionProjects,
-    segmentationProjects,
-    workflowCount: projectStore.workflows.length,
+    activeWorkflowCount,
+    autoAnnotationProjects,
+    pointRefineProjects,
   }
 })
 
@@ -35,9 +42,26 @@ async function createProject() {
   }
 }
 
-function changeTaskType(event: Event) {
-  const target = event.target as HTMLSelectElement
-  projectStore.setCreateTaskType(target.value as TaskType)
+function workflowDisplayName(workflowKey: string): string {
+  return workflowMap.value.get(workflowKey)?.displayName ?? workflowKey
+}
+
+function workflowCapabilitySummary(workflowKey: string): string {
+  const workflow = workflowMap.value.get(workflowKey)
+  if (!workflow) return '能力信息待补充'
+  const summaryItems = [
+    workflow.supportsAutoAnnotation ? '自动标注' : null,
+    workflow.supportsManualBBox ? '框编辑' : null,
+    workflow.supportsPointRefine ? '点修正' : null,
+  ].filter((item): item is string => item != null)
+  return summaryItems.join(' / ') || '基础能力'
+}
+
+function taskStatusTone(status: string): 'neutral' | 'warning' | 'success' | 'danger' {
+  if (status === 'RUNNING' || status === 'QUEUED') return 'warning'
+  if (status === 'SUCCESS') return 'success'
+  if (status === 'FAILED') return 'danger'
+  return 'neutral'
 }
 </script>
 
@@ -59,7 +83,7 @@ function changeTaskType(event: Event) {
         <strong>筛选</strong>
       </template>
       <div class="projects-toolbar">
-        <input v-model="projectStore.search" placeholder="搜索项目 / 工作流 / 任务类型" />
+        <input v-model="projectStore.search" placeholder="搜索项目 / 工作流 / 任务族" />
         <select v-model="projectStore.workflowFilter">
           <option value="all">全部工作流</option>
           <option v-for="workflow in projectStore.workflows" :key="workflow.key" :value="workflow.key">
@@ -75,16 +99,16 @@ function changeTaskType(event: Event) {
         <strong class="mono">{{ projectStore.projects.length }}</strong>
       </div>
       <div class="projects-kpi">
-        <span>检测项目</span>
-        <strong class="mono">{{ summary.detectionProjects }}</strong>
+        <span>使用中工作流</span>
+        <strong class="mono">{{ summary.activeWorkflowCount }}</strong>
       </div>
       <div class="projects-kpi">
-        <span>分割项目</span>
-        <strong class="mono">{{ summary.segmentationProjects }}</strong>
+        <span>自动标注项目</span>
+        <strong class="mono">{{ summary.autoAnnotationProjects }}</strong>
       </div>
       <div class="projects-kpi">
-        <span>工作流数</span>
-        <strong class="mono">{{ summary.workflowCount }}</strong>
+        <span>点修正项目</span>
+        <strong class="mono">{{ summary.pointRefineProjects }}</strong>
       </div>
     </div>
 
@@ -96,9 +120,9 @@ function changeTaskType(event: Event) {
         <div class="projects-table">
           <div class="projects-table-head mono">
             <span>项目</span>
-            <span>任务类型</span>
             <span>工作流</span>
             <span>任务族</span>
+            <span>最近任务</span>
             <span>创建时间</span>
           </div>
           <transition-group name="grid" tag="div" class="projects-table-body">
@@ -109,9 +133,12 @@ function changeTaskType(event: Event) {
               @click="openProject(project.id)"
             >
               <span class="projects-name">{{ project.name }}</span>
-              <span class="mono">{{ taskTypeText(project.taskType) }}</span>
-              <span class="mono">{{ project.workflowKey }}</span>
+              <span class="projects-workflow-cell">
+                <strong>{{ workflowDisplayName(project.workflowKey) }}</strong>
+                <span class="mono">{{ project.workflowKey }}</span>
+              </span>
               <span class="mono">{{ taskFamilyText(project.taskFamily) }}</span>
+              <StatusChip :label="taskStatusText(project.lastTaskStatus)" :tone="taskStatusTone(project.lastTaskStatus)" />
               <span class="mono">{{ project.createdAt }}</span>
             </button>
           </transition-group>
@@ -132,14 +159,6 @@ function changeTaskType(event: Event) {
             <input v-model="projectStore.createDraft.name" placeholder="输入项目名称" />
           </div>
           <div class="projects-drawer-section">
-            <label>任务类型</label>
-            <select :value="projectStore.createDraft.taskType" @change="changeTaskType">
-              <option v-for="taskType in projectStore.taskTypes" :key="taskType" :value="taskType">
-                {{ taskTypeText(taskType) }}
-              </option>
-            </select>
-          </div>
-          <div class="projects-drawer-section">
             <label>工作流</label>
             <div class="projects-workflow-list">
               <button
@@ -149,9 +168,12 @@ function changeTaskType(event: Event) {
                 :class="{ active: workflow.key === projectStore.createDraft.workflowKey }"
                 @click="projectStore.createDraft.workflowKey = workflow.key"
               >
-                {{ workflow.displayName }}
+                <strong>{{ workflow.displayName }}</strong>
+                <span class="mono">{{ taskFamilyText(workflow.taskFamily) }} · {{ workflowCapabilitySummary(workflow.key) }}</span>
+                <span>{{ workflow.description }}</span>
               </button>
             </div>
+            <p class="projects-workflow-hint">任务类型会由 workflow 自动推导并兼容提交，创建时不再单独让用户选择。</p>
           </div>
           <div class="projects-drawer-section">
             <label>标签</label>
@@ -162,10 +184,11 @@ function changeTaskType(event: Event) {
             />
           </div>
           <div v-if="projectStore.selectedWorkflow" class="projects-capabilities mono">
-            <div>工作流={{ projectStore.selectedWorkflow.key }}</div>
-            <div>任务类型={{ taskTypeText(projectStore.selectedWorkflow.taskType) }}</div>
+            <div>工作流={{ projectStore.selectedWorkflow.displayName }}</div>
+            <div>workflow key={{ projectStore.selectedWorkflow.key }}</div>
             <div>任务族={{ taskFamilyText(projectStore.selectedWorkflow.taskFamily) }}</div>
             <div>自动标注={{ projectStore.selectedWorkflow.supportsAutoAnnotation ? '是' : '否' }}</div>
+            <div>手工框编辑={{ projectStore.selectedWorkflow.supportsManualBBox ? '是' : '否' }}</div>
             <div>点修正={{ projectStore.selectedWorkflow.supportsPointRefine ? '是' : '否' }}</div>
           </div>
           <button
@@ -223,7 +246,7 @@ function changeTaskType(event: Event) {
 }
 
 .projects-table {
-  --projects-columns: minmax(220px, 2fr) minmax(96px, 0.9fr) minmax(180px, 1.5fr) minmax(120px, 1fr) minmax(180px, 1.2fr);
+  --projects-columns: minmax(220px, 2fr) minmax(220px, 1.8fr) minmax(120px, 0.9fr) minmax(120px, 1fr) minmax(180px, 1.2fr);
   min-width: 880px;
 }
 
@@ -264,6 +287,15 @@ function changeTaskType(event: Event) {
 .projects-name {
   color: var(--text-strong);
   font-weight: 700;
+}
+
+.projects-workflow-cell {
+  display: grid;
+  gap: 4px;
+}
+
+.projects-workflow-cell strong {
+  color: var(--text-strong);
 }
 
 .projects-empty {
@@ -309,10 +341,31 @@ function changeTaskType(event: Event) {
   gap: 8px;
 }
 
+.projects-workflow-item {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+
+.projects-workflow-item strong {
+  color: var(--text-strong);
+}
+
+.projects-workflow-item span:last-child {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
 .projects-workflow-item.active {
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+.projects-workflow-hint {
+  margin: 10px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
 }
 
 .projects-capabilities {

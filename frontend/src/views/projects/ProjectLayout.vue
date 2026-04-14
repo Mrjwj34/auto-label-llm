@@ -5,13 +5,14 @@ import ProjectTabs from '../../components/ProjectTabs.vue'
 import StatusChip from '../../components/StatusChip.vue'
 import { useProjectStore } from '../../stores/projectStore'
 import { useSystemRuntimeStore } from '../../stores/systemRuntimeStore'
-import { taskFamilyText, taskTypeText } from '../../utils/uiText'
+import { taskFamilyText } from '../../utils/uiText'
 
 const route = useRoute()
 const projectStore = useProjectStore()
 const systemStore = useSystemRuntimeStore()
 
 const projectId = computed(() => Number(route.params.projectId))
+const currentWorkflowName = computed(() => projectStore.settings?.workflow.displayName ?? projectStore.currentProject?.workflowKey ?? '-')
 
 onMounted(() => {
   if (Number.isFinite(projectId.value)) {
@@ -32,7 +33,8 @@ watch(projectId, (nextProjectId) => {
       <div>
         <h1 class="page-title">{{ projectStore.currentProject?.name ?? '项目' }}</h1>
         <div class="page-meta mono">
-          任务类型={{ taskTypeText(projectStore.currentProject?.taskType ?? '-') }} 工作流={{ projectStore.currentProject?.workflowKey ?? '-' }}
+          工作流={{ currentWorkflowName }}
+          workflow key={{ projectStore.currentProject?.workflowKey ?? '-' }}
           任务族={{ taskFamilyText(projectStore.currentProject?.taskFamily ?? '-') }} 创建时间={{ projectStore.currentProject?.createdAt ?? '-' }}
         </div>
       </div>

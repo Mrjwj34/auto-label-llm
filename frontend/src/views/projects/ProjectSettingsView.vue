@@ -45,12 +45,14 @@ const projectWorkflowOptions = computed(() => {
 })
 
 const currentWorkflow = computed(() => projectStore.settings?.workflow ?? null)
+const currentWorkflowName = computed(() => currentWorkflow.value?.displayName ?? projectStore.settings?.workflowKey ?? '-')
 const samEnabledForProject = computed(() => currentWorkflow.value?.capabilities.includes('sam_refine') ?? false)
 
 const currentBaseModel = computed(() => systemStore.systemSettings?.llm.baseModel ?? llmBaseModel.value)
 const currentAnnotationBackend = computed(() => annotationBackendText(systemStore.systemConfig?.runtime.annotationBackend ?? '-'))
-const currentTaskType = computed(() => taskTypeText(projectStore.currentProject?.taskType ?? '-'))
+const compatibilityTaskType = computed(() => taskTypeText(projectStore.currentProject?.taskType ?? '-'))
 const currentTaskFamily = computed(() => taskFamilyText(projectStore.settings?.taskFamily ?? '-'))
+const workflowCompatibilityHint = computed(() => `兼容 taskType 会跟随 workflow 自动推导，当前内部值为 ${compatibilityTaskType.value}。`)
 
 const modelTagHint = computed(() => {
   const modelTag = projectStore.settings?.activeModelTag ?? 'base'
@@ -63,7 +65,7 @@ const modelTagHint = computed(() => {
 const samScopeHint = computed(() =>
   samEnabledForProject.value
     ? 'SAM 是全局分割默认值，只影响新的分割任务；不会只对当前项目单独生效。'
-    : '当前项目是检测任务，不使用 SAM refine，因此这里不展示可编辑的 SAM 配置。',
+    : '当前工作流不使用 SAM refine，因此这里不展示可编辑的 SAM 配置。',
 )
 
 const systemSaveMessage = computed(() => {
@@ -259,8 +261,8 @@ async function saveSystemSettings() {
           <strong class="mono">{{ currentBaseModel }}</strong>
         </div>
         <div class="settings-card">
-          <span>当前任务类型</span>
-          <strong>{{ currentTaskType }}</strong>
+          <span>当前工作流</span>
+          <strong>{{ currentWorkflowName }}</strong>
         </div>
         <div class="settings-card">
           <span>SAM 默认值</span>
@@ -474,12 +476,12 @@ async function saveSystemSettings() {
           <strong class="mono">{{ projectStore.settings?.activeModelTag ?? '-' }}</strong>
         </div>
         <div class="settings-card">
-          <span>当前基础模型</span>
-          <strong class="mono">{{ currentBaseModel }}</strong>
+          <span>当前工作流</span>
+          <strong>{{ currentWorkflowName }}</strong>
         </div>
         <div class="settings-card">
-          <span>任务类型</span>
-          <strong>{{ currentTaskType }}</strong>
+          <span>workflow key</span>
+          <strong class="mono">{{ projectStore.settings?.workflowKey ?? '-' }}</strong>
         </div>
         <div class="settings-card">
           <span>任务族</span>
@@ -488,14 +490,15 @@ async function saveSystemSettings() {
       </div>
 
       <div class="settings-inline-note mono">
-        {{ modelTagHint }}
+        <div>{{ modelTagHint }}</div>
+        <div>{{ workflowCompatibilityHint }}</div>
       </div>
 
       <div class="settings-sections settings-sections-project">
         <section class="settings-block">
           <div class="settings-block-head">
             <h3>项目级可编辑项</h3>
-            <p>这里只保留真正会写入项目的字段：工作流和标签。</p>
+            <p>这里只保留真正会写入项目的字段：工作流和标签。工作流是主入口，任务类型不再单独暴露给用户选择。</p>
           </div>
           <div class="settings-fields">
             <label class="settings-field">
@@ -520,12 +523,20 @@ async function saveSystemSettings() {
         <section class="settings-block">
           <div class="settings-block-head">
             <h3>当前工作流能力</h3>
-            <p>工作流决定当前项目是否支持自动标注、SAM refine 和点修正。</p>
+            <p>工作流决定当前项目是否支持自动标注、SAM refine 和点修正；这里只展示与当前项目兼容的工作流选项。</p>
           </div>
           <div class="settings-summary-list">
             <div class="settings-summary-row">
               <span>工作流</span>
-              <strong>{{ currentWorkflow?.displayName ?? '-' }}</strong>
+              <strong>{{ currentWorkflowName }}</strong>
+            </div>
+            <div class="settings-summary-row">
+              <span>workflow key</span>
+              <strong class="mono">{{ projectStore.settings?.workflowKey ?? '-' }}</strong>
+            </div>
+            <div class="settings-summary-row">
+              <span>任务族</span>
+              <strong>{{ currentTaskFamily }}</strong>
             </div>
             <div class="settings-summary-row">
               <span>自动标注</span>
@@ -598,6 +609,8 @@ async function saveSystemSettings() {
   margin-top: 14px;
   color: var(--text-muted);
   font-size: 13px;
+  display: grid;
+  gap: 6px;
 }
 
 .settings-sections {
