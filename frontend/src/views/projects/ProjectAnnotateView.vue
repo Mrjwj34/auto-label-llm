@@ -429,6 +429,7 @@ watch(
               {{ annotationOptionText(annotation.id) }}
             </option>
           </select>
+          <button :disabled="!studioStore.selectedAnnotationId" @click="studioStore.deleteSelected">删除框</button>
         </div>
       </SectionPanel>
     </aside>
@@ -454,7 +455,7 @@ watch(
 
 .annotate-sidebar {
   display: grid;
-  grid-template-rows: 168px minmax(0, 1fr) 112px;
+  grid-template-rows: 196px minmax(0, 1fr) 132px;
   gap: 16px;
   min-height: 0;
 }
@@ -508,6 +509,11 @@ watch(
   display: grid;
   height: 100%;
   min-height: 0;
+  padding: 12px;
+}
+
+.annotate-column :deep(.section-panel-head) {
+  padding: 10px 12px;
 }
 
 .annotate-stage-wrap {
@@ -579,6 +585,7 @@ watch(
 .annotate-focus-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
   gap: 10px;
   height: 100%;
   align-content: start;
@@ -625,6 +632,8 @@ watch(
 
 .annotate-selection-panel {
   height: 100%;
+  grid-template-columns: minmax(0, 1fr) 88px;
+  align-items: start;
   align-content: start;
 }
 
@@ -648,6 +657,10 @@ watch(
   }
 
   .annotate-focus-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .annotate-selection-panel {
     grid-template-columns: 1fr;
   }
 }
