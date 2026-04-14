@@ -18,9 +18,17 @@
 .section-panel {
   border: 1px solid var(--line);
   background: var(--panel);
-  border-radius: 24px;
-  box-shadow: 0 22px 56px rgba(20, 35, 58, 0.06);
   overflow: hidden;
+  transition:
+    border-color 220ms ease,
+    background-color 220ms ease,
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation: section-panel-enter 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.section-panel:hover {
+  border-color: #b8cbe3;
+  transform: translateY(-2px);
 }
 
 .section-panel-head {
@@ -28,12 +36,13 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  border-bottom: 1px solid rgba(106, 126, 152, 0.14);
-  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+  padding: 12px 16px;
+  background: var(--panel-soft);
 }
 
 .section-panel-body {
-  padding: 18px;
+  padding: 16px;
 }
 
 .section-panel-title {
@@ -46,5 +55,17 @@
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+@keyframes section-panel-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 </style>

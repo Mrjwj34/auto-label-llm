@@ -44,13 +44,11 @@ defineProps<{
 <style scoped>
 .task-banner {
   display: grid;
-  gap: 16px;
-  border: 1px solid var(--text-strong);
-  background: var(--text-strong);
-  border-radius: 24px;
-  padding: 18px 20px;
+  gap: 12px;
+  border: 1px solid #0c5ae0;
+  background: #0b5fff;
+  padding: 14px 16px;
   color: #fff;
-  box-shadow: 0 24px 60px rgba(20, 35, 58, 0.18);
 }
 
 .task-banner-main {
@@ -83,20 +81,14 @@ defineProps<{
 
 .task-banner-track {
   overflow: hidden;
-  height: 10px;
-  border-radius: 999px;
+  height: 8px;
   background: rgba(255, 255, 255, 0.14);
 }
 
 .task-banner-fill {
   height: 100%;
-  background: linear-gradient(90deg, #0b5fff 0%, #4d99ff 48%, #0b5fff 100%);
-  background-size: 160% 100%;
+  background: #d7e6ff;
   transition: width 220ms ease;
-}
-
-.task-banner.running .task-banner-fill {
-  animation: banner-flow 1.4s linear infinite;
 }
 
 .task-banner-message {
@@ -105,12 +97,4 @@ defineProps<{
   font-size: 14px;
 }
 
-@keyframes banner-flow {
-  0% {
-    background-position: 100% 0;
-  }
-  100% {
-    background-position: -100% 0;
-  }
-}
 </style>

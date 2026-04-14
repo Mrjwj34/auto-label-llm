@@ -45,4 +45,19 @@ describe('projectStore', () => {
     expect(store.projects[0]?.name).toBe('Mock Project')
     expect(store.settings?.labels).toEqual(['crack', 'patch'])
   })
+
+  it('saves project settings with a lora model tag', async () => {
+    const store = useProjectStore()
+    const load = store.loadProject(12)
+    await vi.runAllTimersAsync()
+    await load
+
+    const activation = store.saveSettings(12, { activeModelTag: 'lora:4' })
+    await vi.runAllTimersAsync()
+    await activation
+
+    expect(store.settings?.activeModelTag).toBe('lora:4')
+    expect(store.currentProject?.activeModelTag).toBe('lora:4')
+    expect(store.settingsChange?.changedPaths).toContain('active_model_tag')
+  })
 })

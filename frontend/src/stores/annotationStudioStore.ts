@@ -50,6 +50,15 @@ export const useAnnotationStudioStore = defineStore('annotationStudio', {
       if (mode === 'point' && !this.supportsPointMode) return
       this.mode = mode
     },
+    async createAnnotation(label: string, bbox: [number, number, number, number]) {
+      if (!this.projectId || !this.image) return
+      const image = await backendClient.createAnnotation(this.projectId, this.image.id, { label, bbox })
+      const nextSelectedId = image.annotations[image.annotations.length - 1]?.id ?? 0
+      this.image = image
+      this.selectedAnnotationId = nextSelectedId
+      await this.load(this.projectId, this.image.id)
+      this.selectedAnnotationId = nextSelectedId
+    },
     async confirmSelected() {
       if (!this.projectId || !this.image || !this.selectedAnnotationId) return
       this.image = await backendClient.confirmAnnotation(this.projectId, this.image.id, this.selectedAnnotationId)
@@ -61,6 +70,12 @@ export const useAnnotationStudioStore = defineStore('annotationStudio', {
       this.image = await backendClient.deleteAnnotation(this.projectId, this.image.id, this.selectedAnnotationId)
       this.selectedAnnotationId = this.image.annotations[0]?.id ?? 0
       await this.load(this.projectId, this.image.id)
+    },
+    previousImageId(): number | null {
+      if (!this.image) return null
+      const currentIndex = this.queue.findIndex((item) => item.imageId === this.image?.id)
+      if (currentIndex <= 0) return null
+      return this.queue[currentIndex - 1]?.imageId ?? null
     },
     nextImageId(): number | null {
       if (!this.image) return this.queue[0]?.imageId ?? null

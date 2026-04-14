@@ -22,6 +22,7 @@ dist/
 /.cache/
 /output/
 /output/playwright/
+test-results/
 configs/app.local.yaml
 .env
 .env.active

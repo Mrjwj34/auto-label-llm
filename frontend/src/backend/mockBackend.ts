@@ -152,6 +152,40 @@ function buildAnnotation(id: number, label: string, confirmed: boolean, source: 
   }
 }
 
+function bboxToRectPolygon(bbox: [number, number, number, number]): [number, number][] {
+  const [xmin, ymin, xmax, ymax] = bbox
+  return [
+    [xmin, ymin],
+    [xmax, ymin],
+    [xmax, ymax],
+    [xmin, ymax],
+  ]
+}
+
+function createManualAnnotation(
+  project: ProjectState,
+  label: string,
+  bbox: [number, number, number, number],
+): AnnotationRecord {
+  const workflow = getWorkflow(project.workflowKey)
+  return {
+    id: state.nextAnnotationId++,
+    label,
+    source: 'manual',
+    confidence: null,
+    confirmed: false,
+    runtime: {
+      provider: 'manual',
+      modelTag: project.activeModelTag,
+      modelName: state.runtime.modelName,
+    },
+    bbox,
+    polygon: workflow.taskFamily === 'instance_mask' ? bboxToRectPolygon(bbox) : [],
+    positivePoints: 0,
+    negativePoints: 0,
+  }
+}
+
 function buildImage(
   id: number,
   filename: string,
@@ -370,6 +404,16 @@ function createInitialState(): MockState {
             modelTag: 'lora:4',
             startedAt: '2026-04-14 09:12:03',
             datasetPath: 'data/projects/12/exports/finetune/job_4/project_12_train.jsonl',
+            logPath: 'logs/finetune/4.log',
+            taskId: 'finetune-4',
+            config: {
+              dataset: 'project_12_train',
+              num_train_epochs: 3,
+              learning_rate: 0.0001,
+              per_device_train_batch_size: 1,
+              gradient_accumulation_steps: 8,
+              logging_steps: 1,
+            },
             lossCurveLabel: '曲线=214 点 · 轮次=3 · 损失=0.3184',
             logExcerpt: ['step=188 loss=0.3521', 'step=214 loss=0.3184', '适配器已保存到 lora/job_4'],
             metrics: [
@@ -565,20 +609,24 @@ function projectSettingsPayload(project: ProjectState): ProjectSettingsPayload {
     labels: [...project.labels],
     activeModelTag: project.activeModelTag,
     _meta: {
-      projectEditablePaths: ['labels', 'workflow_key'],
+      projectEditablePaths: ['labels', 'workflow_key', 'active_model_tag'],
       availableWorkflows: cloneWorkflows(state.workflows),
       activeSystemProfile: state.runtime.activeProfile,
       resolvedProjectProfile: project.runtimeProfile,
-      note: '项目级仅保存标签与工作流；运行时相关字段统一走全局设置。',
+      note: '项目级保存工作流、标签与激活版本；运行时默认值统一走全局设置。',
     },
   }
 }
 
 function buildProjectSettingsChange(
-  patch: Partial<Pick<ProjectSettingsPayload, 'workflowKey' | 'labels'>>,
+  patch: Partial<Pick<ProjectSettingsPayload, 'workflowKey' | 'labels' | 'activeModelTag'>>,
 ): SettingsChange {
   const changedPaths: string[] = Object.keys(patch)
-    .map((key) => (key === 'workflowKey' ? 'workflow_key' : key))
+    .map((key) => {
+      if (key === 'workflowKey') return 'workflow_key'
+      if (key === 'activeModelTag') return 'active_model_tag'
+      return key
+    })
     .sort()
   const hotReloadPaths: string[] = changedPaths.filter((path) => path === 'labels')
   const reloadRequiredPaths: string[] = []
@@ -589,7 +637,7 @@ function buildProjectSettingsChange(
     reloadRequiredPaths,
     otherPaths,
     reloadRequired: false,
-    message: changedPaths.length === 0 ? '没有检测到变更。' : '已保存项目设置。新的任务将使用最新标签与工作流。',
+    message: changedPaths.length === 0 ? '没有检测到变更。' : '已保存项目设置。新的任务将使用最新工作流、标签与激活版本。',
   }
 }
 
@@ -835,11 +883,45 @@ export const mockBackend: BackendClient = {
     if (patch.labels) {
       project.labels = patch.labels.map((item) => item.trim()).filter(Boolean)
     }
+    if (patch.activeModelTag) {
+      const cleanedTag = patch.activeModelTag.trim()
+      if (!cleanedTag) {
+        throw new Error('activeModelTag is required')
+      }
+      if (cleanedTag !== 'base' && !project.trainJobs.some((job) => job.modelTag === cleanedTag && job.status === 'SUCCESS')) {
+        throw new Error(`model ${cleanedTag} is not available for activation`)
+      }
+      project.activeModelTag = cleanedTag
+      project.trainJobs = project.trainJobs.map((job) => ({
+        ...job,
+        active: job.modelTag === cleanedTag,
+      }))
+    }
     const response: ProjectSettingsUpdateResponse = {
       settings: projectSettingsPayload(project),
       change: buildProjectSettingsChange(patch),
     }
     return response
+  },
+  async activateProjectModel(projectId, modelTag) {
+    await delay()
+    const project = getProjectOrThrow(projectId)
+    const cleanedTag = modelTag.trim()
+    if (!cleanedTag) {
+      throw new Error('modelTag is required')
+    }
+    if (cleanedTag !== 'base' && !project.trainJobs.some((job) => job.modelTag === cleanedTag && job.status === 'SUCCESS')) {
+      throw new Error(`model ${cleanedTag} is not available for activation`)
+    }
+    project.activeModelTag = cleanedTag
+    project.trainJobs = project.trainJobs.map((job) => ({
+      ...job,
+      active: job.modelTag === cleanedTag,
+    }))
+    return {
+      settings: projectSettingsPayload(project),
+      message: cleanedTag === 'base' ? '已切回基础模型。' : `已激活 ${cleanedTag}。`,
+    }
   },
   async startBatchAnnotate(projectId) {
     await delay()
@@ -868,6 +950,34 @@ export const mockBackend: BackendClient = {
       queue,
       image: image ? cloneImageDetail(image) : null,
     }
+  },
+  async createAnnotation(projectId, imageId, input) {
+    await delay()
+    const project = getProjectOrThrow(projectId)
+    const image = project.images.find((item) => item.id === imageId)
+    if (!image) {
+      throw new Error('Image not found')
+    }
+    const label = input.label.trim()
+    if (!label) {
+      throw new Error('Label is required')
+    }
+    const [xmin, ymin, xmax, ymax] = input.bbox
+    const clamped: [number, number, number, number] = [
+      Math.max(0, Math.min(1, xmin)),
+      Math.max(0, Math.min(1, ymin)),
+      Math.max(0, Math.min(1, xmax)),
+      Math.max(0, Math.min(1, ymax)),
+    ]
+    if (clamped[2] - clamped[0] < 0.002 || clamped[3] - clamped[1] < 0.002) {
+      throw new Error('Bbox is too small')
+    }
+    image.annotations = [...image.annotations, createManualAnnotation(project, label, clamped)]
+    image.annotationCount = image.annotations.length
+    image.status = 'done'
+    image.qualityScore = image.qualityScore == null ? 0.82 : image.qualityScore
+    refreshProjectQuality(project)
+    return cloneImageDetail(image)
   },
   async confirmAnnotation(projectId, imageId, annotationId) {
     await delay()
@@ -902,6 +1012,7 @@ export const mockBackend: BackendClient = {
     await delay()
     return getProjectOrThrow(projectId).trainJobs.map((job) => ({
       ...job,
+      config: job.config ? { ...job.config } : undefined,
       logExcerpt: [...job.logExcerpt],
       metrics: cloneTrainMetrics(job.metrics),
     }))
@@ -915,6 +1026,16 @@ export const mockBackend: BackendClient = {
       modelTag: `lora:${state.nextTrainJobId - 1}`,
       startedAt: nowText(),
       datasetPath: `data/projects/${projectId}/exports/finetune/job_${state.nextTrainJobId - 1}/project_${projectId}_train.jsonl`,
+      logPath: `logs/finetune/${state.nextTrainJobId - 1}.log`,
+      taskId: `finetune-${state.nextTrainJobId - 1}`,
+      config: {
+        dataset: `project_${projectId}_train`,
+        num_train_epochs: 4,
+        learning_rate: 0.0001,
+        per_device_train_batch_size: 1,
+        gradient_accumulation_steps: 8,
+        logging_steps: 1,
+      },
       lossCurveLabel: '曲线=等待中',
       logExcerpt: ['正在导出数据集', '正在获取 GPU 锁', '训练已启动'],
       metrics: [],
@@ -924,6 +1045,7 @@ export const mockBackend: BackendClient = {
     startTrainSimulation(project, job.id)
     return project.trainJobs.map((item) => ({
       ...item,
+      config: item.config ? { ...item.config } : undefined,
       logExcerpt: [...item.logExcerpt],
       metrics: cloneTrainMetrics(item.metrics),
     }))

@@ -7,6 +7,7 @@ import ProjectAnnotateView from '../views/projects/ProjectAnnotateView.vue'
 import ProjectTrainView from '../views/projects/ProjectTrainView.vue'
 import ProjectEvaluateView from '../views/projects/ProjectEvaluateView.vue'
 import ProjectSettingsView from '../views/projects/ProjectSettingsView.vue'
+import SystemSettingsView from '../views/system/SystemSettingsView.vue'
 import DiagnosticsView from '../views/system/DiagnosticsView.vue'
 
 const router = createRouter({
@@ -67,6 +68,11 @@ const router = createRouter({
           props: true,
         },
       ],
+    },
+    {
+      path: '/settings',
+      name: 'system-settings',
+      component: SystemSettingsView,
     },
     {
       path: '/diagnostics',

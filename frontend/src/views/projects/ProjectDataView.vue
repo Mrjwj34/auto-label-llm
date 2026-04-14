@@ -116,8 +116,8 @@ function openAnnotate(imageId: number) {
 .data-card {
   display: grid;
   gap: 10px;
+  border: 1px solid var(--line);
   background: var(--panel-soft);
-  border-radius: 22px;
   padding: 12px;
   text-align: left;
 }
@@ -125,7 +125,6 @@ function openAnnotate(imageId: number) {
 .data-thumb {
   width: 100%;
   border: 1px solid var(--line);
-  border-radius: 16px;
 }
 
 .data-card-meta {

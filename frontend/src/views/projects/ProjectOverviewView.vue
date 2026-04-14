@@ -44,8 +44,12 @@ const workflowFacts = computed(() => [
   { label: 'workflow key', value: workflow.value?.key ?? '-' },
   { label: '运行配置', value: workspace.value?.runtimeProfile ?? '-' },
   { label: '最近微调', value: workspace.value?.latestFinetuneTag ?? '--' },
-  { label: '标签', value: workspace.value?.labels.join('、') ?? '-' },
 ])
+
+const labelText = computed(() => {
+  const labels = workspace.value?.labels ?? []
+  return labels.length ? labels.join('、') : '未配置'
+})
 
 const evaluationFacts = computed(() => {
   const latest = runStore.latestEvaluation
@@ -95,6 +99,10 @@ function openAnnotate(imageId: number) {
   void router.push(`/projects/${projectId.value}/annotate?imageId=${imageId}`)
 }
 
+function openProjectSettings() {
+  void router.push(`/projects/${projectId.value}/settings`)
+}
+
 function trainStatusTone(status: string): 'success' | 'accent' | 'danger' | 'neutral' {
   if (status === 'SUCCESS') return 'success'
   if (status === 'RUNNING' || status === 'QUEUED') return 'accent'
@@ -120,7 +128,14 @@ function trainStatusTone(status: string): 'success' | 'accent' | 'danger' | 'neu
         <div class="overview-fact-grid">
           <div v-for="item in workflowFacts" :key="item.label" class="overview-fact">
             <span>{{ item.label }}</span>
-            <strong :class="{ mono: item.label !== '标签' }">{{ item.value }}</strong>
+            <strong class="mono">{{ item.value }}</strong>
+          </div>
+          <div class="overview-fact overview-fact-labels">
+            <div class="overview-fact-head">
+              <span>标签</span>
+              <button @click="openProjectSettings">去设置</button>
+            </div>
+            <strong>{{ labelText }}</strong>
           </div>
         </div>
       </SectionPanel>
@@ -223,10 +238,8 @@ function trainStatusTone(status: string): 'success' | 'accent' | 'danger' | 'neu
   display: grid;
   gap: 10px;
   padding: 16px 18px;
-  border: 1px solid rgba(106, 126, 152, 0.14);
-  border-radius: 22px;
-  background: rgba(255, 255, 255, 0.82);
-  box-shadow: 0 18px 42px rgba(20, 35, 58, 0.05);
+  border: 1px solid var(--line);
+  background: var(--panel);
 }
 
 .overview-stat span {
@@ -259,8 +272,7 @@ function trainStatusTone(status: string): 'success' | 'accent' | 'danger' | 'neu
   display: grid;
   gap: 8px;
   padding: 14px 16px;
-  border: 1px solid rgba(106, 126, 152, 0.12);
-  border-radius: 18px;
+  border: 1px solid var(--line);
   background: var(--panel-soft);
 }
 
@@ -276,6 +288,17 @@ function trainStatusTone(status: string): 'success' | 'accent' | 'danger' | 'neu
   color: var(--text-strong);
 }
 
+.overview-fact-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.overview-fact-labels button {
+  padding: 6px 10px;
+}
+
 .overview-list,
 .overview-stack {
   display: grid;
@@ -286,7 +309,7 @@ function trainStatusTone(status: string): 'success' | 'accent' | 'danger' | 'neu
   display: grid;
   gap: 10px;
   padding: 16px;
-  border-radius: 20px;
+  border: 1px solid var(--line);
   background: var(--panel-soft);
   text-align: left;
 }

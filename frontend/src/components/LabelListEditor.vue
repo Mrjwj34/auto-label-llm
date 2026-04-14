@@ -58,16 +58,13 @@ function handleKeydown(event: KeyboardEvent) {
         <strong aria-hidden="true">×</strong>
       </button>
     </div>
-    <div v-else class="label-editor-empty">还没有标签，先添加一个。</div>
 
     <div class="label-editor-input">
       <input v-model="draft" :placeholder="placeholder ?? '输入一个标签后按回车'" @keydown="handleKeydown" />
       <button type="button" @click="addDraftLabel">添加标签</button>
     </div>
 
-    <div v-if="helper" class="label-editor-helper">
-      {{ helper }}
-    </div>
+    <div v-if="helper" class="label-editor-helper">{{ helper }}</div>
   </div>
 </template>
 
@@ -90,19 +87,19 @@ function handleKeydown(event: KeyboardEvent) {
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent);
-  padding: 8px 12px;
-}
-
-.label-editor-empty,
-.label-editor-helper {
-  color: var(--text-muted);
-  font-size: 13px;
+  padding: 6px 10px;
 }
 
 .label-editor-input {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
+  gap: 8px;
+}
+
+.label-editor-helper {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 @media (max-width: 720px) {

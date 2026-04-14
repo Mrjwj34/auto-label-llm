@@ -125,7 +125,7 @@ export const useProjectStore = defineStore('project', {
         this.saving = false
       }
     },
-    async saveSettings(projectId: number, patch: Partial<Pick<ProjectSettingsPayload, 'workflowKey' | 'labels'>>) {
+    async saveSettings(projectId: number, patch: Partial<Pick<ProjectSettingsPayload, 'workflowKey' | 'labels' | 'activeModelTag'>>) {
       this.saving = true
       try {
         const payload = await backendClient.updateProjectSettings(projectId, patch)
@@ -133,6 +133,19 @@ export const useProjectStore = defineStore('project', {
         this.settingsChange = payload.change
         await this.loadProjects()
         this.currentProject = this.projects.find((project) => project.id === projectId) ?? null
+      } finally {
+        this.saving = false
+      }
+    },
+    async activateModel(projectId: number, modelTag: string) {
+      this.saving = true
+      try {
+        const payload = await backendClient.activateProjectModel(projectId, modelTag)
+        this.settings = payload.settings
+        this.settingsChange = null
+        await this.loadProjects()
+        this.currentProject = this.projects.find((project) => project.id === projectId) ?? null
+        return payload.message
       } finally {
         this.saving = false
       }

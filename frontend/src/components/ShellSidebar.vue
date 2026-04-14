@@ -20,6 +20,7 @@ function isProjectRoute() {
 
     <nav class="shell-nav">
       <RouterLink class="shell-link" :class="{ active: isProjectRoute() }" to="/projects">项目</RouterLink>
+      <RouterLink class="shell-link" :class="{ active: route.path === '/settings' }" to="/settings">全局设置</RouterLink>
       <RouterLink class="shell-link" :class="{ active: route.path === '/diagnostics' }" to="/diagnostics">诊断</RouterLink>
     </nav>
   </aside>
@@ -78,13 +79,13 @@ function isProjectRoute() {
     border-color 160ms ease,
     color 160ms ease,
     background-color 160ms ease,
-    transform 160ms ease;
+    transform 220ms ease;
 }
 
 .shell-link:hover {
   background: rgba(11, 95, 255, 0.06);
   color: var(--text-strong);
-  transform: translateX(2px);
+  transform: translateX(4px);
 }
 
 .shell-link.active {

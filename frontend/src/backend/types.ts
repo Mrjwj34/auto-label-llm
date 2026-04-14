@@ -121,6 +121,9 @@ export type TrainJob = {
   modelTag: string
   startedAt: string
   datasetPath: string
+  logPath?: string
+  taskId?: string
+  config?: Record<string, string | number | boolean | null>
   lossCurveLabel: string
   logExcerpt: string[]
   metrics: TrainMetricPoint[]
@@ -293,6 +296,16 @@ export type ProjectSettingsUpdateResponse = {
   change: SettingsChange
 }
 
+export type ProjectModelActivationResponse = {
+  settings: ProjectSettingsPayload
+  message: string
+}
+
+export type AnnotationCreateInput = {
+  label: string
+  bbox: [number, number, number, number]
+}
+
 export type ProjectTabKey = 'overview' | 'data' | 'annotate' | 'train' | 'evaluate' | 'settings'
 
 export interface BackendClient {
@@ -301,7 +314,11 @@ export interface BackendClient {
   createProject(input: { name: string; taskType: TaskType; workflowKey?: string }): Promise<{ id: number }>
   getProjectWorkspace(projectId: number): Promise<ProjectWorkspace>
   getProjectSettings(projectId: number): Promise<ProjectSettingsPayload>
-  updateProjectSettings(projectId: number, patch: Partial<Pick<ProjectSettingsPayload, 'workflowKey' | 'labels'>>): Promise<ProjectSettingsUpdateResponse>
+  updateProjectSettings(
+    projectId: number,
+    patch: Partial<Pick<ProjectSettingsPayload, 'workflowKey' | 'labels' | 'activeModelTag'>>,
+  ): Promise<ProjectSettingsUpdateResponse>
+  activateProjectModel(projectId: number, modelTag: string): Promise<ProjectModelActivationResponse>
   startBatchAnnotate(projectId: number): Promise<TaskSnapshot>
   getAnnotationStudio(projectId: number, imageId?: number): Promise<{
     project: ProjectSummary
@@ -309,6 +326,7 @@ export interface BackendClient {
     queue: ReviewQueueItem[]
     image: ImageDetail | null
   }>
+  createAnnotation(projectId: number, imageId: number, input: AnnotationCreateInput): Promise<ImageDetail>
   confirmAnnotation(projectId: number, imageId: number, annotationId: number): Promise<ImageDetail>
   deleteAnnotation(projectId: number, imageId: number, annotationId: number): Promise<ImageDetail>
   listTrainJobs(projectId: number): Promise<TrainJob[]>

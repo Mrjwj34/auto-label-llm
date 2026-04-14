@@ -223,8 +223,7 @@ onBeforeUnmount(() => {
   place-items: center;
   min-height: 280px;
   border: 1px solid var(--line);
-  border-radius: 24px;
-  background: linear-gradient(180deg, rgba(31, 111, 255, 0.04), rgba(31, 111, 255, 0));
+  background: var(--panel-soft);
   color: var(--text-muted);
 }
 
@@ -238,26 +237,20 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
-  border: 1px solid rgba(106, 126, 152, 0.14);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.74);
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  background: #fff;
   color: var(--text-soft);
 }
 
 .metric-legend-swatch {
   width: 10px;
   height: 10px;
-  border-radius: 999px;
 }
 
 .metric-canvas {
   min-height: 280px;
   border: 1px solid var(--line);
-  border-radius: 24px;
-  background:
-    linear-gradient(180deg, rgba(31, 111, 255, 0.05), rgba(31, 111, 255, 0.01)),
-    #fbfcfe;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  background: #f9fbff;
 }
 </style>
