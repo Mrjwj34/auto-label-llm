@@ -44,6 +44,7 @@ TRAIN_PROGRESS_END = 95
 TERMINAL_JOB_STATES = {"done", "failed"}
 GIB = 1024**3
 MIN_DOWNLOAD_FREE_BYTES = 8 * GIB
+REAL_FINETUNE_PROFILES = {"test_real_stack", "demo_prod"}
 
 
 def _settings_paths() -> tuple[Path, Path]:
@@ -259,6 +260,54 @@ def _restore_local_managed_vllm(config: dict[str, Any], log_path: Path) -> None:
     _append_log(log_path, f"Restored local managed vLLM: {result['message']}")
 
 
+def _profile_requires_real_finetune() -> bool:
+    return str(get_settings().app_profile or "").strip() in REAL_FINETUNE_PROFILES
+
+
+def finetune_runtime_status() -> dict[str, Any]:
+    settings = get_settings()
+    requested_backend = str(settings.finetune_backend or "auto").strip() or "auto"
+    cli_available = _resolve_llamafactory_command(required=False) is not None
+    requires_real_backend = _profile_requires_real_finetune()
+
+    effective_backend = requested_backend
+    ready = True
+    note = ""
+    if requested_backend == "auto":
+        if cli_available:
+            effective_backend = "llamafactory"
+            note = "Auto mode will use LLaMA-Factory because the CLI is available."
+        elif requires_real_backend:
+            effective_backend = "unavailable"
+            ready = False
+            note = (
+                "This profile requires real LLaMA-Factory training, but LLAMAFACTORY_CLI is unavailable. "
+                "Install/start with --with-llamafactory or configure LLAMAFACTORY_CLI."
+            )
+        else:
+            effective_backend = "mock"
+            note = "Auto mode will fall back to the mock finetune runner because LLAMAFACTORY_CLI is unavailable."
+    elif requested_backend == "llamafactory":
+        if cli_available:
+            note = "Real LLaMA-Factory finetune is ready."
+        else:
+            effective_backend = "unavailable"
+            ready = False
+            note = "FINETUNE_BACKEND=llamafactory is configured, but LLAMAFACTORY_CLI is unavailable."
+    else:
+        note = "Mock finetune runner is enabled explicitly."
+
+    return {
+        "requested_backend": requested_backend,
+        "effective_backend": effective_backend,
+        "requires_real_backend": requires_real_backend,
+        "llamafactory_cli": str(settings.llamafactory_cli or "").strip(),
+        "llamafactory_cli_available": cli_available,
+        "ready": ready,
+        "note": note,
+    }
+
+
 def _job_workspace_root(project_id: int, job_id: int) -> Path:
     root = Path(get_settings().resolved_data_dir) / "projects" / str(project_id) / "exports" / "finetune" / f"job_{job_id}"
     root.mkdir(parents=True, exist_ok=True)
@@ -471,6 +520,7 @@ def create_finetune_job(project_id: int, db: Session) -> tuple[FinetuneJob, str]
     db.flush()
 
     config = generate_lora_config(project, job.id)
+    config["runner_backend"] = _resolve_finetune_backend(raise_app_error=True)
     _model_root, log_root = _settings_paths()
     log_path = log_root / f"{job.id}.log"
     log_path.write_text("", encoding="utf-8")
@@ -537,7 +587,7 @@ def run_finetune_job_task(job_id: int, *, ctx: TaskContext | None = None) -> Non
             config = _load_job_config(job)
             config["dataset_path"] = job.dataset_path
             config = _prepare_training_assets(project, job, config)
-            runner_backend = _resolve_finetune_backend()
+            runner_backend = str(config.get("runner_backend") or "").strip() or _resolve_finetune_backend()
             config["runner_backend"] = runner_backend
 
             if runner_backend == "llamafactory":
@@ -732,15 +782,26 @@ def _load_job_config(job: FinetuneJob) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def _resolve_finetune_backend() -> str:
+def _resolve_finetune_backend(*, raise_app_error: bool = False) -> str:
     settings = get_settings()
-    requested = settings.finetune_backend
+    requested = str(settings.finetune_backend or "auto").strip() or "auto"
     if requested == "mock":
         return "mock"
     if requested == "llamafactory":
         _resolve_llamafactory_command(required=True)
         return "llamafactory"
-    return "llamafactory" if _resolve_llamafactory_command(required=False) else "mock"
+    if _resolve_llamafactory_command(required=False):
+        return "llamafactory"
+    if _profile_requires_real_finetune():
+        message = (
+            f"{settings.app_profile} requires real LLaMA-Factory finetune, but LLAMAFACTORY_CLI is unavailable. "
+            "Install/start with --with-llamafactory or configure LLAMAFACTORY_CLI. "
+            "Use FINETUNE_BACKEND=mock only for an explicit low-resource fallback."
+        )
+        if raise_app_error:
+            raise AppError(400, message)
+        raise RuntimeError(message)
+    return "mock"
 
 
 def _resolve_llamafactory_command(*, required: bool) -> list[str] | None:
@@ -810,8 +871,21 @@ def _run_mock_training(
                 "job_id": job.id,
                 "project_id": project.id,
                 "base_model": config.get("model_name_or_path"),
+                "base_model_name_or_path": config.get("model_name_or_path"),
                 "peft_type": "LORA",
                 "r": 8,
+                "lora_alpha": 16,
+                "target_modules": [
+                    "q_proj",
+                    "k_proj",
+                    "v_proj",
+                    "o_proj",
+                    "gate_proj",
+                    "up_proj",
+                    "down_proj",
+                ],
+                "task_type": "CAUSAL_LM",
+                "auto_labeling_mock_adapter": True,
             },
             ensure_ascii=False,
             indent=2,
@@ -912,7 +986,17 @@ def _write_adapter_metadata(output_dir: Path, payload: dict[str, Any]) -> None:
 
     adapter_config_path = output_dir / "adapter_config.json"
     if not adapter_config_path.exists():
-        adapter_config_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        adapter_payload = dict(payload)
+        adapter_payload.setdefault("base_model_name_or_path", payload.get("base_model"))
+        adapter_payload.setdefault("lora_alpha", payload.get("lora_alpha", 16))
+        adapter_payload.setdefault(
+            "target_modules",
+            payload.get(
+                "target_modules",
+                ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+            ),
+        )
+        adapter_config_path.write_text(json.dumps(adapter_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _resolve_llamafactory_template(base_model_name: str) -> str:

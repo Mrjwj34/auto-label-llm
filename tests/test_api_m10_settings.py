@@ -145,13 +145,15 @@ def test_system_profile_activation_updates_runtime_and_auto_project_defaults(pro
     assert initial_payload["active_profile"] == "dev_low_resource"
     assert initial_payload["runtime"]["annotation_backend"] == "stub"
     assert initial_payload["runtime"]["vllm_model_name"] in ("", "qwen3-vl-2b")
+    assert initial_payload["runtime"]["finetune"]["effective_backend"] == "mock"
+    assert initial_payload["runtime"]["finetune"]["requires_real_backend"] is False
 
     activate = client.post("/api/system/model/activate", json={"profile": "test_real_stack"})
     assert activate.status_code == 200
     activated = activate.json()["data"]
     assert activated["active_profile"] == "test_real_stack"
     assert activated["runtime"]["annotation_backend"] == "openai_compatible"
-    assert activated["runtime"]["vllm_model_name"] == "qwen3-vl-8b"
+    assert activated["runtime"]["vllm_model_name"] == "qwen3-vl-4b"
     assert (root_dir / ".env.active").exists()
     assert (root_dir / "frontend" / ".env.local").exists()
 
@@ -160,14 +162,17 @@ def test_system_profile_activation_updates_runtime_and_auto_project_defaults(pro
     refreshed_payload = refreshed.json()["data"]
     assert refreshed_payload["active_profile"] == "test_real_stack"
     assert refreshed_payload["runtime"]["annotation_backend"] == "openai_compatible"
-    assert refreshed_payload["runtime"]["vllm_model_name"] == "qwen3-vl-8b"
+    assert refreshed_payload["runtime"]["vllm_model_name"] == "qwen3-vl-4b"
+    assert refreshed_payload["runtime"]["finetune"]["effective_backend"] == "unavailable"
+    assert refreshed_payload["runtime"]["finetune"]["requires_real_backend"] is True
+    assert refreshed_payload["runtime"]["finetune"]["llamafactory_cli_available"] is False
 
     project_id = _create_project(client, name="profile-aware")
     settings_resp = client.get(f"/api/projects/{project_id}/settings")
     assert settings_resp.status_code == 200
     settings_payload = settings_resp.json()["data"]
     assert settings_payload["model_profile"] == "auto"
-    assert settings_payload["llm"]["base_model"] == "qwen3-vl-8b"
+    assert settings_payload["llm"]["base_model"] == "qwen3-vl-4b"
     assert settings_payload["sam"]["checkpoint"] == "sam2.1"
     assert settings_payload["_meta"]["resolved_project_profile"] == "test_real_stack"
 

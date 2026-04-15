@@ -181,6 +181,16 @@ def activate_finetune_job(client: httpx.Client, base_url: str, job_id: int) -> d
     return payload
 
 
+def assert_real_finetune_status(payload: dict[str, Any]) -> None:
+    config = payload.get("config") if isinstance(payload.get("config"), dict) else {}
+    runner_backend = str(config.get("runner_backend") or "")
+    if runner_backend != "llamafactory":
+        raise RuntimeError(
+            "phase2 requires real LLaMA-Factory finetune on test_real_stack; "
+            f"got runner_backend={runner_backend or 'unknown'}"
+        )
+
+
 def compare_evaluation(
     client: httpx.Client,
     base_url: str,
@@ -455,8 +465,13 @@ def run_phase2(
         poll_task(client, base_url, str(finetune_started["task_id"]), timeout_seconds=timeout_seconds)
         finetune_status = poll_finetune_job(client, base_url, job_id, timeout_seconds=timeout_seconds)
 
+    assert_real_finetune_status(finetune_status)
+
     model_tag = f"lora:{job_id}"
     activation = activate_finetune_job(client, base_url, job_id)
+    activation_route = activation.get("route") if isinstance(activation.get("route"), dict) else {}
+    if str(activation_route.get("route_kind") or "") != "lora":
+        raise RuntimeError(f"phase2 requires a real runtime LoRA route, got: {activation!r}")
     project_settings_after = get_project_settings(client, base_url, resolved_project_id)
     if str(project_settings_after.get("active_model_tag") or "") != model_tag:
         raise RuntimeError(f"unexpected active_model_tag after activation: {project_settings_after!r}")
@@ -480,6 +495,7 @@ def run_phase2(
             str(inference.get("effective_model_tag") or "") != model_tag
             or str(inference.get("provider") or "") != "openai_compatible"
             or bool(inference.get("fallback_used"))
+            or str(inference.get("route_kind") or "") != "lora"
         ):
             mismatched.append(row)
     if mismatched:

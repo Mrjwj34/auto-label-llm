@@ -108,6 +108,25 @@ class VLLMCallResult:
     annotations: list[GeneratedAnnotation]
 
 
+def _finetune_job_config(job: FinetuneJob) -> dict[str, Any]:
+    return _load_json_dict(job.config)
+
+
+def _is_mock_finetune_job(job: FinetuneJob) -> bool:
+    config = _finetune_job_config(job)
+    runner_backend = str(config.get("runner_backend") or "").strip().lower()
+    if runner_backend == "mock":
+        return True
+
+    if not job.lora_path:
+        return False
+    adapter_config = resolve_path(str(Path(job.lora_path) / "adapter_config.json"))
+    if not adapter_config.exists():
+        return False
+    payload = _load_json_dict(adapter_config.read_text(encoding="utf-8"))
+    return bool(payload.get("auto_labeling_mock_adapter"))
+
+
 def build_grounding_prompt(*, labels: list[str], task_type: str) -> str:
     labels_text = ", ".join(labels) if labels else "none"
     return (
@@ -155,6 +174,17 @@ def resolve_inference_route(
             raise AppError(400, f"LoRA job {job_id} does not have an output directory")
 
         job_base_model = _resolve_job_base_model(job) or base_model_name
+        if _is_mock_finetune_job(job):
+            return InferenceRoute(
+                requested_model_tag=requested,
+                effective_model_tag=requested,
+                request_model_name=job_base_model,
+                base_model_name=job_base_model,
+                resolved_project_profile=resolved_profile,
+                route_kind="mock_lora",
+                adapter_path=str(job.lora_path),
+                finetune_job_id=job_id,
+            )
         return InferenceRoute(
             requested_model_tag=requested,
             effective_model_tag=requested,
@@ -232,16 +262,25 @@ def _sync_local_managed_vllm_runtime(
 
     actions: list[dict[str, Any]] = []
     previous_tag = str(previous_model_tag or "base").strip() or "base"
-    needs_lora_sync = previous_tag.startswith("lora:") or target_route.route_kind == "lora"
+    previous_route: InferenceRoute | None = None
+    if previous_tag.startswith("lora:"):
+        try:
+            previous_route = resolve_inference_route(project, requested_model_tag=previous_tag, db=db)
+        except AppError:
+            previous_route = None
+
+    previous_requires_runtime_lora = previous_route is not None and previous_route.route_kind == "lora"
+    target_requires_runtime_lora = target_route.route_kind == "lora"
+    needs_lora_sync = previous_requires_runtime_lora or target_requires_runtime_lora
 
     with GPULock.acquire_model_reload():
-        started = ensure_local_managed_vllm_started(enable_lora=target_route.route_kind == "lora")
+        started = ensure_local_managed_vllm_started(enable_lora=target_requires_runtime_lora)
         if started["status"] in {"started", "already_running"}:
             actions.append(
                 {
                     "action": "start" if started["status"] == "started" else "reuse",
                     "pid": started.get("pid"),
-                    "enable_lora": target_route.route_kind == "lora",
+                    "enable_lora": target_requires_runtime_lora,
                 }
             )
 
@@ -257,7 +296,7 @@ def _sync_local_managed_vllm_runtime(
             actions.extend(runtime_result["actions"])
 
     message = "Local managed vLLM is ready for the requested route."
-    if target_route.route_kind == "lora":
+    if target_route.route_kind in {"lora", "mock_lora"}:
         message = f"Local managed vLLM is ready for {target_route.effective_model_tag}."
     return {
         "status": "synced",

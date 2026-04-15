@@ -80,6 +80,11 @@ def test_finetune_job_runs_exports_dataset_and_can_activate(client):
 
     final_status = _poll_finetune_job(client, job_id)
     assert final_status["status"] == "done"
+    if final_status["config"]["runner_backend"] == "pending":
+        status_resp = client.get(f"/api/finetune/{job_id}/status")
+        assert status_resp.status_code == 200
+        final_status = status_resp.json()["data"]
+
     assert final_status["model_tag"] == f"lora:{job_id}"
     assert final_status["dataset_path"]
     assert final_status["lora_path"]
@@ -338,6 +343,19 @@ def test_finetune_job_can_run_llamafactory_subprocess(client, monkeypatch):
     metrics = final_status["metrics"]
     assert len(metrics) >= 3
     assert metrics[-1]["loss"] is not None
+
+
+def test_finetune_start_rejects_real_profile_when_llamafactory_is_missing(client, monkeypatch):
+    project_id, _image_id = _create_confirmed_train_annotation(client, task_type="detection")
+
+    monkeypatch.setenv("APP_PROFILE", "test_real_stack")
+    monkeypatch.setenv("FINETUNE_BACKEND", "auto")
+    monkeypatch.setenv("LLAMAFACTORY_CLI", "definitely-missing-llamafactory-cli")
+    get_settings.cache_clear()
+
+    start = client.post("/api/finetune/start", json={"project_id": project_id})
+    assert start.status_code == 400
+    assert "requires real LLaMA-Factory finetune" in start.json()["message"]
 
 
 def test_build_train_runtime_config_excludes_internal_metadata():

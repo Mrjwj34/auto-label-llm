@@ -31,13 +31,21 @@ export function TaskTicker({ taskId, title, onFinished }: TaskTickerProps) {
 
     let closed = false
     let timer: number | null = null
+    let fallbackTimer: number | null = null
     let socket: WebSocket | null = null
+    let wsOpened = false
 
     const finish = (next: TaskStatusPayload) => {
       setTask(next)
       if (doneStates.has(next.status)) {
         onFinishedRef.current?.(next)
       }
+    }
+
+    const fetchSnapshot = async () => {
+      const next = await api.getTaskStatus(taskId)
+      if (closed) return
+      finish(next)
     }
 
     const poll = async () => {
@@ -57,7 +65,14 @@ export function TaskTicker({ taskId, title, onFinished }: TaskTickerProps) {
     try {
       socket = new WebSocket(`${wsBaseUrl(API_BASE_URL)}/ws/tasks/${taskId}`)
       socket.onopen = () => {
-        if (!closed) setTransport('ws')
+        if (!closed) {
+          wsOpened = true
+          if (fallbackTimer) {
+            window.clearTimeout(fallbackTimer)
+            fallbackTimer = null
+          }
+          setTransport('ws')
+        }
       }
       socket.onmessage = (event) => {
         const next = JSON.parse(event.data) as {
@@ -74,7 +89,7 @@ export function TaskTicker({ taskId, title, onFinished }: TaskTickerProps) {
             status: next.status,
             progress: next.progress,
             message: next.message,
-          version: current?.version ?? 0,
+            version: current?.version ?? 0,
           }
           if (doneStates.has(merged.status)) {
             onFinishedRef.current?.(merged)
@@ -86,7 +101,7 @@ export function TaskTicker({ taskId, title, onFinished }: TaskTickerProps) {
         socket?.close()
       }
       socket.onclose = () => {
-        if (!closed) {
+        if (!closed && !wsOpened) {
           poll()
         }
       }
@@ -94,11 +109,17 @@ export function TaskTicker({ taskId, title, onFinished }: TaskTickerProps) {
       poll()
     }
 
-    poll()
+    void fetchSnapshot().catch(() => {})
+    fallbackTimer = window.setTimeout(() => {
+      if (!closed && !wsOpened) {
+        poll()
+      }
+    }, 1500)
 
     return () => {
       closed = true
       if (timer) window.clearTimeout(timer)
+      if (fallbackTimer) window.clearTimeout(fallbackTimer)
       socket?.close()
     }
   }, [taskId])

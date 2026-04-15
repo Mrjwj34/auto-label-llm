@@ -5,12 +5,11 @@
     "APP_PROFILE": "test_real_stack",
     "ANNOTATION_BACKEND": "openai_compatible",
     "VLLM_BASE_URL": "http://127.0.0.1:8001",
-    "VLLM_MODEL_NAME": "qwen3-vl-8b",
+    "VLLM_MODEL_NAME": "qwen3-vl-4b",
     "VLLM_MAX_MODEL_LEN": "2048",
-    "VLLM_GPU_MEMORY_UTILIZATION": "0.72",
-    "VLLM_MAX_NUM_SEQS": "1",
-    "VLLM_MAX_NUM_BATCHED_TOKENS": "1024",
-    "VLLM_CPU_OFFLOAD_GB": "8",
+    "VLLM_GPU_MEMORY_UTILIZATION": "0.92",
+    "VLLM_MAX_NUM_SEQS": "2",
+    "VLLM_MAX_NUM_BATCHED_TOKENS": "4096",
     "LLM_REQUEST_TIMEOUT_SECONDS": "180",
     "LLM_MAX_RETRIES": "1",
     "LLM_MAX_TOKENS": "1024",
@@ -22,8 +21,8 @@
   },
   "project_defaults": {
     "llm": {
-      "base_model": "qwen3-vl-8b",
-      "auto_order": ["8b", "4b", "2b"],
+      "base_model": "qwen3-vl-4b",
+      "auto_order": ["4b", "8b", "2b"],
       "max_tokens": 1024
     },
     "sam": {

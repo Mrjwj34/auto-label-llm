@@ -91,6 +91,7 @@ vllm_disable_custom_all_reduce=0
 vllm_disable_custom_all_reduce_explicit=0
 
 llamafactory_cli="${LLAMAFACTORY_CLI:-llamafactory-cli}"
+finetune_backend="${FINETUNE_BACKEND:-auto}"
 
 timestamp="$(date +%Y%m%d-%H%M%S)"
 session_log_dir=""
@@ -1071,7 +1072,7 @@ apply_vllm_safe_defaults() {
       safe_max_num_batched_tokens="1024"
       safe_swap_space="8"
       safe_cpu_offload_gb="8"
-    elif (( gpu_mib <= 24576 )); then
+    elif (( gpu_mib < 24000 )); then
       safe_max_model_len="4096"
       safe_gpu_util="0.82"
       safe_max_num_seqs="1"
@@ -1157,7 +1158,7 @@ apply_vllm_safe_defaults() {
   fi
 
   if [[ "$vllm_enforce_eager_explicit" -eq 0 ]]; then
-    vllm_enforce_eager=1
+    vllm_enforce_eager=0
   fi
 }
 
@@ -1444,6 +1445,20 @@ if [[ "$with_llamafactory" == "auto" ]]; then
   fi
 fi
 
+if [[ "$finetune_backend" == "auto" ]]; then
+  if [[ "$with_llamafactory" == "yes" ]]; then
+    finetune_backend="llamafactory"
+  else
+    finetune_backend="mock"
+  fi
+fi
+
+if [[ "$profile" == "test_real_stack" || "$profile" == "demo_prod" ]]; then
+  if [[ "$finetune_backend" != "llamafactory" ]]; then
+    log "WARNING: $profile is not configured for real finetune (FINETUNE_BACKEND=$finetune_backend). Real phase2 verification will fail fast."
+  fi
+fi
+
 if [[ -z "$sam3_version" ]]; then
   if [[ "$profile" == "test_real_stack" || "$profile" == "demo_prod" ]]; then
     sam3_version="sam2.1"
@@ -1669,7 +1684,7 @@ elif [[ "$setup_only" -ne 1 && "$start_frontend" -eq 1 && ! -d "$repo_root/front
 fi
 
 write_profile_envs() {
-  "$venv_python" - "$repo_root" "$profile" "$api_host" "$api_port" "$frontend_host" "$frontend_port" "$redis_url" "$vllm_base_url" "$embedded_worker" "$llamafactory_cli" "$vllm_model_source" <<'PY'
+  "$venv_python" - "$repo_root" "$profile" "$api_host" "$api_port" "$frontend_host" "$frontend_port" "$redis_url" "$vllm_base_url" "$embedded_worker" "$llamafactory_cli" "$vllm_model_source" "$finetune_backend" <<'PY'
 from __future__ import annotations
 
 import json
@@ -1695,6 +1710,7 @@ vllm_base_url = sys.argv[8]
 embedded_worker = sys.argv[9] == "1"
 llamafactory_cli = sys.argv[10]
 vllm_model_source = sys.argv[11]
+finetune_backend = sys.argv[12]
 
 profile = read_system_profile(profile_name, root_dir=repo_root)
 backend_values = dict(profile["backend"])
@@ -1714,6 +1730,7 @@ backend_values["REDIS_URL"] = redis_url
 backend_values["TASK_EMBEDDED_WORKER"] = "true" if embedded_worker else "false"
 backend_values["CORS_ALLOW_ORIGINS"] = json.dumps(frontend_origins, ensure_ascii=False)
 backend_values["VLLM_BASE_URL"] = vllm_base_url
+backend_values["FINETUNE_BACKEND"] = finetune_backend
 backend_values["LLAMAFACTORY_CLI"] = llamafactory_cli
 if vllm_model_source:
     backend_values["VLLM_MODEL_SOURCE"] = vllm_model_source
@@ -2109,6 +2126,7 @@ Ready.
   Frontend      : $( [[ "$start_frontend" -eq 1 ]] && printf 'http://%s:%s' "$frontend_host" "$frontend_port" || printf 'disabled' )
   Redis         : $redis_url$( [[ "$redis_reused" -eq 1 ]] && printf ' (reused)' || printf ' (managed)' )
   OpenAI route  : $vllm_base_url
+  Finetune      : $finetune_backend$( [[ "$finetune_backend" == "llamafactory" ]] && printf ' (%s)' "$llamafactory_cli" || printf '' )
   Logs          : $session_log_dir
   Install cache : $install_state_dir
 

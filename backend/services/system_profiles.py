@@ -92,6 +92,8 @@ def detect_active_profile(root_dir: Path | None = None) -> str:
 
 
 def activate_system_profile(name: str, *, root_dir: Path | None = None) -> dict[str, Any]:
+    from backend.services.finetune_service import finetune_runtime_status
+
     profile = read_system_profile(name, root_dir=root_dir)
     backend_env = active_backend_env_path(root_dir)
     frontend_env = active_frontend_env_path(root_dir)
@@ -116,6 +118,7 @@ def activate_system_profile(name: str, *, root_dir: Path | None = None) -> dict[
             "llm_request_timeout_seconds": settings.llm_request_timeout_seconds,
             "llm_max_retries": settings.llm_max_retries,
             "llm_max_tokens": settings.llm_max_tokens,
+            "finetune": finetune_runtime_status(),
         },
         "message": "Profile files updated. Backend settings cache cleared; restart frontend if Vite env values changed.",
     }
@@ -154,6 +157,7 @@ def write_env_file(path: Path, values: dict[str, Any], *, header: str | None = N
 
 
 def system_config_payload(root_dir: Path | None = None) -> dict[str, Any]:
+    from backend.services.finetune_service import finetune_runtime_status
     from backend.services.system_runtime_settings import build_system_runtime_settings_response
 
     settings = get_settings()
@@ -173,6 +177,7 @@ def system_config_payload(root_dir: Path | None = None) -> dict[str, Any]:
             "llm_request_timeout_seconds": settings.llm_request_timeout_seconds,
             "llm_max_retries": settings.llm_max_retries,
             "llm_max_tokens": settings.llm_max_tokens,
+            "finetune": finetune_runtime_status(),
         },
         "metadata": {
             "hot_reload_fields": list(SYSTEM_HOT_RELOAD_FIELDS),

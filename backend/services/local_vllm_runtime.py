@@ -173,44 +173,53 @@ def ensure_local_managed_vllm_started(
     cwd = Path(str(state.get("cwd") or get_settings().root_dir)).resolve()
     log_path = Path(str(state.get("log_path") or (get_settings().root_dir / "logs" / "vllm-runtime.log"))).resolve()
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    start_timeout = _resolve_start_timeout(state, timeout=timeout)
+    commands = [command, *_build_retry_commands(command)]
+    last_error: Exception | None = None
 
-    with log_path.open("ab") as log_handle:
-        process = subprocess.Popen(  # noqa: S603
-            command,
-            cwd=str(cwd),
-            env=env,
-            stdout=log_handle,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
+    for attempt_index, attempt_command in enumerate(commands):
+        with log_path.open("ab") as log_handle:
+            process = subprocess.Popen(  # noqa: S603
+                attempt_command,
+                cwd=str(cwd),
+                env=env,
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
 
-    state["command"] = command
-    state["pid"] = process.pid
-    state["started_at"] = _utc_now()
-    state["stopped_at"] = None
-    state["enable_lora"] = "--enable-lora" in command
-    write_local_vllm_state(state)
+        state["command"] = attempt_command
+        state["pid"] = process.pid
+        state["started_at"] = _utc_now()
+        state["stopped_at"] = None
+        state["enable_lora"] = "--enable-lora" in attempt_command
+        write_local_vllm_state(state)
 
-    try:
-        _wait_for_vllm_ready(
-            str(state.get("base_url") or ""),
-            timeout=_resolve_start_timeout(state, timeout=timeout),
-            pid=process.pid,
-        )
-    except Exception:
         try:
-            os.kill(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        _store_stopped_state(state)
-        raise
+            _wait_for_vllm_ready(
+                str(state.get("base_url") or ""),
+                timeout=start_timeout,
+                pid=process.pid,
+            )
+            return {
+                "status": "started",
+                "pid": process.pid,
+                "command": attempt_command,
+                "message": "Started local managed vLLM.",
+            }
+        except Exception as exc:
+            last_error = exc
+            try:
+                os.kill(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            _store_stopped_state(state)
+            _wait_for_vllm_shutdown(str(state.get("base_url") or ""), timeout=5.0)
 
-    return {
-        "status": "started",
-        "pid": process.pid,
-        "command": command,
-        "message": "Started local managed vLLM.",
-    }
+            if attempt_index >= len(commands) - 1 or not _should_retry_with_lower_memory(log_path, exc):
+                raise
+
+    raise RuntimeError(f"Local managed vLLM did not start successfully: {last_error}")
 
 
 def _build_command_for_start(state: dict[str, Any], *, enable_lora: bool) -> list[str]:
@@ -226,11 +235,80 @@ def _build_command_for_start(state: dict[str, Any], *, enable_lora: bool) -> lis
     return command
 
 
+def _build_retry_commands(command: list[str]) -> list[list[str]]:
+    retries: list[list[str]] = []
+    original_gpu_util = _extract_flag_value(command, "--gpu-memory-utilization")
+    original_max_num_seqs = _extract_flag_value(command, "--max-num-seqs")
+    original_max_batched_tokens = _extract_flag_value(command, "--max-num-batched-tokens")
+
+    try:
+        gpu_util = float(original_gpu_util) if original_gpu_util is not None else None
+    except Exception:
+        gpu_util = None
+    try:
+        max_num_seqs = int(original_max_num_seqs) if original_max_num_seqs is not None else None
+    except Exception:
+        max_num_seqs = None
+    try:
+        max_batched_tokens = int(original_max_batched_tokens) if original_max_batched_tokens is not None else None
+    except Exception:
+        max_batched_tokens = None
+
+    for next_gpu_util in _retry_gpu_utils(gpu_util):
+        retry = list(command)
+        retry = _upsert_flag(retry, "--gpu-memory-utilization", f"{next_gpu_util:.2f}")
+        if max_num_seqs is not None and max_num_seqs > 1:
+            retry = _upsert_flag(retry, "--max-num-seqs", "1")
+        if max_batched_tokens is not None and max_batched_tokens > 2048:
+            retry = _upsert_flag(retry, "--max-num-batched-tokens", "2048")
+        retries.append(retry)
+
+    return retries
+
+
+def _retry_gpu_utils(current: float | None) -> list[float]:
+    if current is None:
+        return []
+    candidates: list[float] = []
+    for candidate in (current - 0.02, current - 0.05, current - 0.08):
+        rounded = round(candidate, 2)
+        if rounded < 0.72:
+            continue
+        if rounded >= current:
+            continue
+        if rounded not in candidates:
+            candidates.append(rounded)
+    return candidates
+
+
 def _command_satisfies_mode(state: dict[str, Any], *, enable_lora: bool) -> bool:
     command = [str(part) for part in (state.get("command") or [])]
     if not enable_lora:
         return True
     return "--enable-lora" in command
+
+
+def _extract_flag_value(command: list[str], flag: str) -> str | None:
+    for index, part in enumerate(command):
+        if part == flag and index + 1 < len(command):
+            return str(command[index + 1])
+        if part.startswith(f"{flag}="):
+            return part.split("=", 1)[1]
+    return None
+
+
+def _upsert_flag(command: list[str], flag: str, value: str) -> list[str]:
+    updated = list(command)
+    for index, part in enumerate(updated):
+        if part == flag:
+            if index + 1 < len(updated):
+                updated[index + 1] = value
+                return updated
+        if part.startswith(f"{flag}="):
+            updated[index] = f"{flag}={value}"
+            return updated
+    updated.extend([flag, value])
+    return updated
 
 
 def _store_stopped_state(state: dict[str, Any]) -> None:
@@ -323,6 +401,32 @@ def _is_vllm_healthy(base_url: str, *, probe_urls: list[str] | None = None) -> b
     except Exception:
         return False
     return False
+
+
+def _should_retry_with_lower_memory(log_path: Path, error: Exception) -> bool:
+    text = str(error)
+    if "less than desired GPU memory utilization" in text:
+        return True
+    if "exited before becoming healthy" in text:
+        tail = _read_log_tail(log_path)
+        if "less than desired GPU memory utilization" in tail:
+            return True
+        if "Decrease GPU memory utilization" in tail:
+            return True
+    return False
+
+
+def _read_log_tail(log_path: Path, *, max_bytes: int = 16384) -> str:
+    if not log_path.exists():
+        return ""
+    try:
+        with log_path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - max_bytes))
+            return handle.read().decode("utf-8", errors="ignore")
+    except Exception:
+        return ""
 
 
 def _probe_urls(base_url: str) -> list[str]:

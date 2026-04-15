@@ -306,7 +306,7 @@ def test_openai_failure_falls_back_to_stub_and_keeps_route_metadata(
     assert "fallback" in str(final_task["message"])
 
     assert len(FakeVLLMClient.requests) == 1
-    assert FakeVLLMClient.requests[0]["json"]["model"] == "qwen3-vl-8b"
+    assert FakeVLLMClient.requests[0]["json"]["model"] == "qwen3-vl-4b"
 
     annotations = openai_client.get(f"/api/images/{image_id}/annotations")
     assert annotations.status_code == 200
@@ -317,7 +317,7 @@ def test_openai_failure_falls_back_to_stub_and_keeps_route_metadata(
     assert inference["provider"] == "stub"
     assert inference["requested_backend"] == "openai_compatible"
     assert inference["effective_model_tag"] == "base"
-    assert inference["request_model_name"] == "qwen3-vl-8b"
+    assert inference["request_model_name"] == "qwen3-vl-4b"
     assert inference["fallback_used"] is True
     assert "vllm offline" in str(inference["warning"])
 
@@ -424,7 +424,7 @@ def test_project_model_activation_switches_base_and_lora_and_evaluation_uses_act
     assert final_run["model_tag"] == f"lora:{job_id}"
 
     assert len(FakeVLLMClient.requests) == 1
-    assert FakeVLLMClient.requests[0]["json"]["model"] == f"lora:{job_id}"
+    assert FakeVLLMClient.requests[0]["json"]["model"] == "qwen3-vl-4b"
     assert FakeVLLMClient.requests[0]["json"]["chat_template_kwargs"] == {"enable_thinking": False}
     assert FakeVLLMClient.requests[0]["json"]["messages"][1]["content"][0]["text"].startswith("/no_think\n")
 
@@ -435,7 +435,7 @@ def test_project_model_activation_switches_base_and_lora_and_evaluation_uses_act
     assert payload["inference"]["effective_model_tag"] == f"lora:{job_id}"
     assert payload["images"][0]["image_id"] == val_image_id
     assert payload["images"][0]["inference"]["provider"] == "openai_compatible"
-    assert payload["images"][0]["inference"]["request_model_name"] == f"lora:{job_id}"
+    assert payload["images"][0]["inference"]["request_model_name"] == "qwen3-vl-4b"
     assert FakeVLLMClient.requests[0]["json"]["max_tokens"] == 128
 
 
@@ -466,7 +466,8 @@ def test_project_model_activation_can_sync_vllm_runtime_lora(openai_client: Test
     assert activate_lora.status_code == 200
     runtime_sync = activate_lora.json()["data"]["activation"]["runtime_sync"]
     assert runtime_sync["status"] == "synced"
-    assert runtime_sync["actions"][0]["action"] == "load"
+    assert runtime_sync["actions"] == []
+    assert activate_lora.json()["data"]["activation"]["route"]["route_kind"] == "mock_lora"
 
     activate_base = openai_client.post(
         f"/api/projects/{project_id}/models/activate",
@@ -475,11 +476,9 @@ def test_project_model_activation_can_sync_vllm_runtime_lora(openai_client: Test
     assert activate_base.status_code == 200
     base_sync = activate_base.json()["data"]["activation"]["runtime_sync"]
     assert base_sync["status"] == "synced"
-    assert base_sync["actions"][0]["action"] == "unload"
+    assert base_sync["actions"] == []
 
-    urls = [entry["url"] for entry in FakeVLLMClient.requests]
-    assert any(url.endswith("/v1/load_lora_adapter") for url in urls)
-    assert any(url.endswith("/v1/unload_lora_adapter") for url in urls)
+    assert FakeVLLMClient.requests == []
 
 
 def test_runtime_lora_route_404_has_actionable_error(monkeypatch: pytest.MonkeyPatch):

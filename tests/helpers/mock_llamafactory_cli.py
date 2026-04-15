@@ -58,8 +58,21 @@ def main(argv: list[str]) -> int:
         json.dumps(
             {
                 "base_model": config.get("model_name_or_path"),
+                "base_model_name_or_path": config.get("model_name_or_path"),
                 "peft_type": "LORA",
                 "r": 8,
+                "lora_alpha": 16,
+                "target_modules": [
+                    "q_proj",
+                    "k_proj",
+                    "v_proj",
+                    "o_proj",
+                    "gate_proj",
+                    "up_proj",
+                    "down_proj",
+                ],
+                "task_type": "CAUSAL_LM",
+                "auto_labeling_mock_adapter": True,
             },
             ensure_ascii=False,
             indent=2,

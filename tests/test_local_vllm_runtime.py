@@ -147,6 +147,73 @@ def test_ensure_local_managed_vllm_started_fails_fast_when_process_exits_before_
     assert stored["pid"] is None
 
 
+def test_ensure_local_managed_vllm_started_retries_with_lower_memory_settings(
+    local_vllm_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    log_path = local_vllm_env / "logs" / "vllm.log"
+    _write_state(
+        local_vllm_env,
+        pid=None,
+        log_path=log_path.as_posix(),
+        command=[
+            sys.executable,
+            "-m",
+            "vllm.entrypoints.openai.api_server",
+            "--model",
+            "demo",
+            "--gpu-memory-utilization",
+            "0.90",
+            "--max-num-seqs",
+            "2",
+            "--max-num-batched-tokens",
+            "4096",
+        ],
+    )
+
+    seen_commands: list[list[str]] = []
+    wait_calls = {"count": 0}
+
+    class _FakeProcess:
+        def __init__(self, pid: int):
+            self.pid = pid
+
+    def fake_popen(command, cwd, env, stdout, stderr, start_new_session):  # noqa: ANN001
+        seen_commands.append(list(command))
+        return _FakeProcess(4300 + len(seen_commands))
+
+    def fake_wait(base_url, *, timeout, pid=None):  # noqa: ANN001
+        wait_calls["count"] += 1
+        if wait_calls["count"] == 1:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text(
+                "ValueError: Free memory on device cuda:0 (20.9/23.52 GiB) on startup is less than desired "
+                "GPU memory utilization (0.9, 21.17 GiB). Decrease GPU memory utilization or reduce GPU memory used "
+                "by other processes.\n",
+                encoding="utf-8",
+            )
+            raise RuntimeError("Local managed vLLM exited before becoming healthy (pid=4301).")
+
+    monkeypatch.setattr(local_vllm_runtime.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(local_vllm_runtime, "_wait_for_vllm_ready", fake_wait)
+    monkeypatch.setattr(local_vllm_runtime, "_wait_for_vllm_shutdown", lambda *args, **kwargs: None)
+    monkeypatch.setattr(local_vllm_runtime.os, "kill", lambda pid, sig: None)
+
+    result = local_vllm_runtime.ensure_local_managed_vllm_started(enable_lora=False, timeout=5)
+
+    assert result["status"] == "started"
+    assert len(seen_commands) == 2
+    assert local_vllm_runtime._extract_flag_value(seen_commands[0], "--gpu-memory-utilization") == "0.90"
+    assert local_vllm_runtime._extract_flag_value(seen_commands[1], "--gpu-memory-utilization") == "0.88"
+    assert local_vllm_runtime._extract_flag_value(seen_commands[1], "--max-num-seqs") == "1"
+    assert local_vllm_runtime._extract_flag_value(seen_commands[1], "--max-num-batched-tokens") == "2048"
+
+    stored = local_vllm_runtime.read_local_vllm_state(local_vllm_env)
+    assert stored is not None
+    assert stored["pid"] == 4302
+    assert local_vllm_runtime._extract_flag_value(stored["command"], "--gpu-memory-utilization") == "0.88"
+
+
 def test_stop_local_managed_vllm_marks_state_stopped(local_vllm_env: Path, monkeypatch: pytest.MonkeyPatch):
     _write_state(local_vllm_env, pid=5678)
     running = {"value": True}

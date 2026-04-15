@@ -228,6 +228,23 @@ export function SystemPage({ pushToast }: SystemPageProps) {
             <span>vLLM 地址</span>
             <strong>{config.runtime.vllm_base_url}</strong>
           </div>
+          <div>
+            <span>微调后端</span>
+            <strong>
+              {config.runtime.finetune.effective_backend}
+              {config.runtime.finetune.requested_backend !== config.runtime.finetune.effective_backend
+                ? `（请求：${config.runtime.finetune.requested_backend}）`
+                : ''}
+            </strong>
+          </div>
+          <div>
+            <span>LLaMA-Factory</span>
+            <strong>{config.runtime.finetune.llamafactory_cli_available ? '已就绪' : '未就绪'}</strong>
+          </div>
+          <div>
+            <span>微调说明</span>
+            <strong>{config.runtime.finetune.note}</strong>
+          </div>
         </div>
       </section>
     </motion.div>

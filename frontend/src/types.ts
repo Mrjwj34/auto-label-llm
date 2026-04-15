@@ -199,6 +199,15 @@ export type SystemConfigPayload = {
     llm_request_timeout_seconds: number
     llm_max_retries: number
     llm_max_tokens: number
+    finetune: {
+      requested_backend: string
+      effective_backend: string
+      requires_real_backend: boolean
+      llamafactory_cli: string
+      llamafactory_cli_available: boolean
+      ready: boolean
+      note: string
+    }
   }
   metadata: {
     hot_reload_fields: string[]
