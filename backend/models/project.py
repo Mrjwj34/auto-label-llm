@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -20,7 +18,7 @@ class Project(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     task_type: Mapped[str] = mapped_column(String, nullable=False)  # 'detection' | 'segmentation'
-    config: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON string
+    config: Mapped[str] = mapped_column(Text, nullable=True)  # JSON string
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp(), nullable=False)
 
     images: Mapped[list["Image"]] = relationship(back_populates="project", cascade="all, delete-orphan")

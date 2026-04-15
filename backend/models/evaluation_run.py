@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -22,11 +20,11 @@ class EvaluationRun(Base):
     status: Mapped[str] = mapped_column(String, nullable=False, server_default="pending")
     split: Mapped[str] = mapped_column(String, nullable=False, server_default="val")
     model_tag: Mapped[str] = mapped_column(String, nullable=False, server_default="base")
-    metrics: Mapped[str | None] = mapped_column(Text, nullable=True)
-    report_path: Mapped[str | None] = mapped_column(String, nullable=True)
-    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    metrics: Mapped[str] = mapped_column(Text, nullable=True)
+    report_path: Mapped[str] = mapped_column(String, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp(), nullable=False)
-    config: Mapped[str | None] = mapped_column(Text, nullable=True)
+    config: Mapped[str] = mapped_column(Text, nullable=True)
 
     project: Mapped["Project"] = relationship(back_populates="evaluation_runs")

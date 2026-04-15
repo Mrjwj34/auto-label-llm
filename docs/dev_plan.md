@@ -75,7 +75,7 @@
 | M17 | SAM3 → SAM2 迁移 | 分割链路切到更贴近当前需求的 SAM2 官方路线 | ✅ | 9742036 |
 | M18 | 工作流系统重构（最小安全插件化） | 以 `workflow_key + task_family + atomic capabilities` 收敛流程编排，并先评估改动规模 | ✅ | b95edac / 506ca11 |
 | M19 | OCI 分发与环境自检 | Docker Hub 固定镜像 + Compose + 模型缓存 + doctor/selftest | ⬜ | - |
-| M20 | 前端完全重构 | 以正式产品形态重做前端架构、交互与视觉体系 | ⬜ | - |
+| M20 | 前端完全重构 | 以正式产品形态重做前端架构、交互与视觉体系 | 🟡 | - |
 
 > 说明：原 M10 “一键启动与演示脚本”顺延为 M16。M10～M15 用于补齐当前实现与 `design_doc.md` 之间的差距，目标是最终与设计文档一致。M17～M20 为下一阶段主计划，依次收敛模型选型、工作流编排、分发方式与前端产品化。
 
@@ -488,25 +488,29 @@
 ### M20 — 前端完全重构
 
 **范围**
-- 以前端正式产品形态为目标，重做信息架构、关键工作流、状态管理和视觉体系，而不是在当前简略界面上持续打补丁。
+- 以前端正式产品形态为目标，使用 `React + Vite + TypeScript` 重做信息架构、关键工作流、状态管理和视觉体系，而不是在旧版开发期界面上持续打补丁。
 - 保留现有业务能力闭环：项目管理、图片列表、自动标注、人工修正、微调、评估、系统设置与任务状态。
 - 将“开发期占位式界面”替换为正式可演示、可扩展的前端服务，兼顾后续继续增长的功能复杂度。
+- 前端必须以 `docs/frontend_api_inventory.md` 和真实后端路由为准，不依赖任何不存在的聚合工作台接口。
 
 **实现清单**
-- 重做页面架构与路由层：项目页、图片工作台、训练/评估面板、系统设置、任务监控。
-- 重做状态管理与数据流，减少当前页面局部状态堆叠和跨模块耦合。
-- 重构标注工作台交互，包括检测/分割的查看、纠错、确认与来源展示。
+- 删除旧 `Vue` 前端并替换为新的 `React` 前端入口、路由层、统一 API 层与任务状态订阅层。
+- 重做页面架构与路由层：左侧导航、项目列表、项目工作区、标注工作台、训练/评估面板、系统设置、任务监控。
+- 重做状态管理与数据流，减少页面局部状态堆叠和跨模块耦合；统一处理 REST、文件上传下载、任务轮询与 WebSocket 回退。
+- 重构标注工作台交互，包括检测/分割的查看、纠错、确认、任务进度与来源展示。
 - 将项目创建、概览、工作台与设置页进一步收敛为 `workflow + task_family` 驱动：前端不再默认所有视觉任务都可等价表达为 `bbox + polygon/mask`。
 - 为后续 `semantic_mask`、`change_mask`、`polyline`、旋转框、关键点等 workflow 预留前后端契约扩展位，必要时同步补充标注结果 schema、渲染协议、编辑工具和导出/评估语义。
-- 补齐更系统的前端测试：核心页面回归、关键交互流程、配置与任务状态展示。
+- 补齐更系统的前端测试与回归：核心页面回归、关键交互流程、配置与任务状态展示。
 
 **验收**
 - 在不牺牲现有功能的前提下，前端完成一次真正的结构性替换，而不是局部修修补补。
 - 关键工作流可连续演示：上传/导入 → 自动标注 → 人工修正 → 微调/评估 → 查看结果与配置。
 - 新界面具备独立服务化部署能力，能直接纳入 M19 的 OCI 分发体系。
+- 当前阶段按 `🟡 待人工验收` 处理：代码与浏览器联调已通过，待最终人工体验收后再改为 `✅`。
 
 **验证步骤**
-- 前端构建通过，核心页面浏览器回归通过。
+- `cd frontend && npm run build` 通过。
+- 使用低资源配置启动真实前后端后，完成至少一轮浏览器回归：创建项目 → 保存项目标签 → 上传图片 → 触发自动标注任务 → 打开全局设置页。
 - 至少完成一轮真实端到端演示录屏或验收截图，覆盖标注、修正、训练、评估与设置。
 - 与旧界面相比，明确列出被替换的结构问题与新的维护边界。
 
@@ -549,5 +553,6 @@
 | 2026-04-07 | M13 | 🟡 → ✅ | - | `.venv\Scripts\python.exe scripts\verify_m13_real_redis.py --redis-url redis://127.0.0.1:6380/15 --flush-redis-db` | ✅ 真实 Redis + 独立 worker + 浏览器回归通过 | 当前 Redis 任务骨架已完成分进程联调验证；结合本机算力与现有任务抽象，M13 阶段先不额外引入 Celery |
 | 2026-04-07 | M14 | ⬜ → 🟡 | - | `.venv\Scripts\python.exe -m compileall backend tests scripts`、`.venv\Scripts\python.exe -m pytest -q`、`cd frontend && npm run build`、`.venv\Scripts\python.exe scripts\verify_m14_browser.py --redis-url redis://127.0.0.1:6380/14 --flush-redis-db` | ✅ 后端测试 + 浏览器回归通过 | 真实 LLaMA-Factory subprocess 入口、metrics 暴露、LoRA runtime API hook 与可复跑浏览器验证脚本已落地；真实训练效果仍待 `test_real_stack` 验收 |
 | 2026-04-07 | M15 | ⬜ → ✅ | - | `.venv\Scripts\python.exe -m compileall backend tests scripts`、`.venv\Scripts\python.exe -m pytest -q`、`cd frontend && npm run build`、Playwright MCP 浏览器回归（两次 evaluation compare + failure sample 面板） | ✅ 代码测试 + 浏览器回归通过 | 已补齐 `mIoU_mask / Dice`、run compare API、失败样本摘要、性能统计与前端对比看板，达到本地验收条件 |
+| 2026-04-15 | M20 | ⬜ → 🟡 | - | `cd frontend && npm run build`、低资源配置下启动 `uvicorn backend.main:app` + `npm run dev`、命令行 Playwright 浏览器回归（创建项目 → 保存标签 → 上传图片 → 自动标注 → 打开全局设置） | ⏳ 待验收 | 旧 Vue 前端已替换为 React 前端；完成左侧导航 + 右侧工作区、统一 API 层、标注/评估/微调/全局设置主界面，并修复低资源联调中的 CORS 与任务状态订阅问题 |
 | 2026-04-07 | M16 | ⬜ → ✅ | - | `wsl bash -n scripts/start-linux.sh`、`wsl bash scripts/start-linux.sh --help`、`.venv\Scripts\python.exe -m compileall backend tests scripts`、`.venv\Scripts\python.exe -m pytest -q`、`cd frontend && npm run build` | ✅ 启动脚本语法/帮助页通过，代码测试通过 | 已收敛为单一 `scripts/start-linux.sh` Linux 入口；当前 WSL 因缺少 `python3-pip/ensurepip` 且无免密 sudo，未完整跑通自动补系统依赖分支，但失败提示已验证清晰，目标 Linux 机器按 README 具备 sudo 后即可走完整自举链路 |
 | 2026-04-13 | M17 | ⬜ → ⏳ | - | `.venv_test/bin/pytest tests/test_sam_service_m12.py tests/test_api_m10_settings.py tests/test_profile_scripts.py tests/test_api_m4_auto_annotations.py tests/test_api_m5_segmentation.py tests/test_api_m6_corrections.py tests/test_api_m7_dataset_io.py tests/test_api_m1.py tests/test_api_m2_annotations.py tests/test_api_m3_tasks.py -q`、`bash -n scripts/start-linux.sh`、`bash scripts/start-linux.sh --help` | ⏳ 待后续真机验收 | 已将默认 `SAM` 基线切到 `SAM2`，保留 `SAM3` 兼容分支；本地仅做 CPU/stub/配置级验证，不触发任何真实模型推理或下载 |

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -22,10 +20,10 @@ class Image(Base):
     )
     filename: Mapped[str] = mapped_column(String, nullable=False)
     file_path: Mapped[str] = mapped_column(String, nullable=False)
-    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    width: Mapped[int] = mapped_column(Integer, nullable=True)
+    height: Mapped[int] = mapped_column(Integer, nullable=True)
     split: Mapped[str] = mapped_column(String, nullable=False, server_default="train")
-    quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    quality_score: Mapped[float] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False, server_default="pending")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp(), nullable=False)
 
